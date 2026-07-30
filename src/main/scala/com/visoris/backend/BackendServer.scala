@@ -1,39 +1,61 @@
 package com.visoris.backend
 
-import cats.effect.Async
+import cats.effect.{Async, Resource}
 import cats.syntax.all.*
 import com.comcast.ip4s.*
+import com.visoris.backend.config.Database
+import com.visoris.backend.iam.controller.AuthController
+import com.visoris.backend.iam.infrastructure.{RefreshTokenRepositoryImpl, UserRepositoryImpl}
+import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
+import com.visoris.backend.shared.dto.ApiResponse
 import fs2.io.net.Network
-import org.http4s.ember.client.EmberClientBuilder
+import io.circe.syntax.*
+import org.http4s.{HttpApp, MediaType}
 import org.http4s.ember.server.EmberServerBuilder
-import org.http4s.implicits.*
-import org.http4s.server.middleware.Logger
+import org.http4s.headers.`Content-Type`
+import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BackendServer:
 
+  private def errorHandler[F[_]: Async: Logger](app: HttpApp[F]): HttpApp[F] =
+    HttpApp[F] { req =>
+      app(req).handleErrorWith { err =>
+        Logger[F].error(err)("Unhandled error processing request") *>
+          Async[F].pure(
+            org.http4s.Response[F](
+              org.http4s.Status.InternalServerError
+            ).withEntity(
+              ApiResponse.error("Erro interno do servidor. Tente novamente.", 500).asJson.noSpaces
+            ).withContentType(`Content-Type`(MediaType.application.json))
+          )
+      }
+    }
+
   def run[F[_]: Async: Network]: F[Nothing] = {
-    for {
-      client <- EmberClientBuilder.default[F].build
-      helloWorldAlg = HelloWorld.impl[F]
-      jokeAlg = Jokes.impl[F](client)
+    given Logger[F] = Slf4jLogger.getLogger[F]
 
-      // Combine Service Routes into an HttpApp.
-      // Can also be done via a Router if you
-      // want to extract segments not checked
-      // in the underlying routes.
-      httpApp = (
-        BackendRoutes.helloWorldRoutes[F](helloWorldAlg) <+>
-        BackendRoutes.jokeRoutes[F](jokeAlg)
-      ).orNotFound
+    val appResource = for {
+      dbUrl  <- Resource.pure[F, String](sys.env.getOrElse("DB_URL", "jdbc:postgresql://postgres:5432/visoris_db"))
+      dbUser <- Resource.pure[F, String](sys.env.getOrElse("DB_USER", "postgres"))
+      dbPass <- Resource.pure[F, String](sys.env.getOrElse("DB_PASSWORD", "postgres"))
+      jwtSecret <- Resource.pure[F, String](sys.env.getOrElse("JWT_SECRET", "changeme-dev-secret"))
 
-      // With Middlewares in place
-      finalHttpApp = Logger.httpApp(true, true)(httpApp)
+      transactor <- Database.makeTransactor[F](dbUrl, dbUser, dbPass)
+      _ <- Resource.eval(Database.runMigrations[F](transactor))
 
-      _ <- 
+      given UserRepository = UserRepositoryImpl()
+      given RefreshTokenRepository = RefreshTokenRepositoryImpl()
+
+      authController = AuthController[F](jwtSecret, transactor)
+      httpApp = errorHandler(authController.routes.orNotFound)
+
+      _ <-
         EmberServerBuilder.default[F]
           .withHost(ipv4"0.0.0.0")
           .withPort(port"8080")
-          .withHttpApp(finalHttpApp)
+          .withHttpApp(httpApp)
           .build
     } yield ()
-  }.useForever
+    appResource.useForever
+  }
