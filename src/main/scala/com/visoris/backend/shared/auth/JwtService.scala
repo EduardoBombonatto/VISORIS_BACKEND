@@ -6,6 +6,7 @@ import io.circe.generic.auto.*
 import io.circe.parser.*
 import io.circe.syntax.*
 import pdi.jwt.{JwtAlgorithm, JwtCirce, JwtClaim}
+import java.security.SecureRandom
 import java.time.Instant
 
 final case class JwtUserClaims(
@@ -35,6 +36,14 @@ object JwtService:
         secret,
         algorithm
       )
+    }
+
+  def createRefreshToken[F[_]: Sync](): F[String] =
+    Sync[F].delay {
+      val random = new SecureRandom()
+      val bytes = new Array[Byte](32)
+      random.nextBytes(bytes)
+      bytes.map("%02x".format(_)).mkString
     }
 
   def decodeAndValidate[F[_]: Sync](

@@ -5,14 +5,15 @@ import cats.syntax.all.*
 import com.comcast.ip4s.*
 import com.visoris.backend.config.Database
 import com.visoris.backend.iam.controller.AuthController
-import com.visoris.backend.iam.infrastructure.{RefreshTokenRepositoryImpl, UserRepositoryImpl}
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
+import com.visoris.backend.iam.service.RegistrationService
+import com.visoris.backend.shared.auth.AuthMiddleware
 import com.visoris.backend.shared.dto.ApiResponse
 import fs2.io.net.Network
 import io.circe.syntax.*
-import org.http4s.{HttpApp, MediaType}
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.headers.`Content-Type`
+import org.http4s.{HttpApp, MediaType}
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -44,11 +45,13 @@ object BackendServer:
       transactor <- Database.makeTransactor[F](dbUrl, dbUser, dbPass)
       _ <- Resource.eval(Database.runMigrations[F](transactor))
 
-      given UserRepository = UserRepositoryImpl()
-      given RefreshTokenRepository = RefreshTokenRepositoryImpl()
+      userRepo = UserRepository.make[F](transactor)
+      refreshTokenRepo = RefreshTokenRepository.make[F](transactor)
+      registrationService = RegistrationService.make[F](jwtSecret, transactor, userRepo, refreshTokenRepo)
+      authMiddleware = AuthMiddleware.make[F](jwtSecret, userRepo)
 
-      authController = AuthController[F](jwtSecret, transactor)
-      httpApp = errorHandler(authController.routes.orNotFound)
+      authRoutes = AuthController.routes[F](registrationService)
+      httpApp = errorHandler(authRoutes.orNotFound)
 
       _ <-
         EmberServerBuilder.default[F]

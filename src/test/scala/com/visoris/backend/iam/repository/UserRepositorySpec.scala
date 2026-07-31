@@ -1,18 +1,16 @@
-package com.visoris.backend.iam.infrastructure
+package com.visoris.backend.iam.repository
 
 import cats.effect.IO
 import cats.effect.Resource
 import cats.effect.Sync
 import com.visoris.backend.iam.domain.User
-import doobie.*
 import doobie.hikari.HikariTransactor
-import doobie.implicits.*
 import munit.CatsEffectSuite
 import org.flywaydb.core.Flyway
 
 import java.time.Instant
 
-class UserRepositoryImplSpec extends CatsEffectSuite:
+class UserRepositorySpec extends CatsEffectSuite:
 
   private val dbUrl  = sys.env.getOrElse("DB_URL", "jdbc:postgresql://localhost:5432/visoris_db")
   private val dbUser = sys.env.getOrElse("DB_USER", "postgres")
@@ -36,10 +34,15 @@ class UserRepositoryImplSpec extends CatsEffectSuite:
       }
     }
 
-  private val repo = UserRepositoryImpl()
+  private def assertCreate(repo: UserRepository[IO], user: User): IO[Unit] =
+    repo.create(user).flatMap {
+      case Right(()) => IO.unit
+      case Left(e)   => IO(fail(s"Expected success, got $e"))
+    }
 
   test("create user and find by email") {
     transactorResource.use { xa =>
+      val repo = UserRepository.make[IO](xa)
       val email = s"test-${System.currentTimeMillis()}@visoris.com"
       val user = User(
         id = System.currentTimeMillis,
@@ -50,8 +53,8 @@ class UserRepositoryImplSpec extends CatsEffectSuite:
         createdAt = Instant.now
       )
       for
-        _     <- repo.create(user).transact(xa)
-        found <- repo.findByEmail(email).transact(xa)
+        _     <- assertCreate(repo, user)
+        found <- repo.findByEmail(email)
       yield
         assert(found.isDefined)
         assertEquals(found.get.email, email.toLowerCase)
@@ -61,6 +64,7 @@ class UserRepositoryImplSpec extends CatsEffectSuite:
 
   test("findByEmail should be case-insensitive") {
     transactorResource.use { xa =>
+      val repo = UserRepository.make[IO](xa)
       val email = s"CaseTest-${System.currentTimeMillis()}@Visoris.com"
       val user = User(
         id = System.currentTimeMillis,
@@ -71,8 +75,8 @@ class UserRepositoryImplSpec extends CatsEffectSuite:
         createdAt = Instant.now
       )
       for
-        _     <- repo.create(user).transact(xa)
-        found <- repo.findByEmail(email).transact(xa)
+        _     <- assertCreate(repo, user)
+        found <- repo.findByEmail(email)
       yield
         assert(found.isDefined)
         assertEquals(found.get.email, email.toLowerCase)
@@ -81,6 +85,7 @@ class UserRepositoryImplSpec extends CatsEffectSuite:
 
   test("findByProfessionalDocument should return user when doc exists") {
     transactorResource.use { xa =>
+      val repo = UserRepository.make[IO](xa)
       val doc = s"CRMV-TEST-${System.currentTimeMillis}"
       val user = User(
         id = System.currentTimeMillis,
@@ -91,8 +96,8 @@ class UserRepositoryImplSpec extends CatsEffectSuite:
         createdAt = Instant.now
       )
       for
-        _     <- repo.create(user).transact(xa)
-        found <- repo.findByProfessionalDocument(doc).transact(xa)
+        _     <- assertCreate(repo, user)
+        found <- repo.findByProfessionalDocument(doc)
       yield
         assert(found.isDefined)
         assertEquals(found.get.professionalDocument, Some(doc))
@@ -101,14 +106,16 @@ class UserRepositoryImplSpec extends CatsEffectSuite:
 
   test("findByProfessionalDocument should return None for non-existent doc") {
     transactorResource.use { xa =>
-      repo.findByProfessionalDocument(s"NONEXISTENT-${System.currentTimeMillis}").transact(xa).map { found =>
+      val repo = UserRepository.make[IO](xa)
+      repo.findByProfessionalDocument(s"NONEXISTENT-${System.currentTimeMillis}").map { found =>
         assertEquals(found, None)
       }
     }
   }
 
-  test("duplicate email insert should raise unique violation") {
+  test("duplicate email insert should return DuplicateEmail error") {
     transactorResource.use { xa =>
+      val repo = UserRepository.make[IO](xa)
       val email = s"dup-${System.currentTimeMillis}@visoris.com"
       val docBase = s"DOC-DUP-${System.currentTimeMillis}"
       val user1 = User(
@@ -124,16 +131,17 @@ class UserRepositoryImplSpec extends CatsEffectSuite:
         professionalDocument = Some(s"$docBase-2")
       )
       for
-        _       <- repo.create(user1).transact(xa)
-        attempt <- repo.create(user2).transact(xa).attempt
-      yield attempt match
-        case Left(_)  => assert(true)
-        case Right(_) => fail("Expected unique violation on duplicate email")
+        _     <- assertCreate(repo, user1)
+        result <- repo.create(user2)
+      yield result match
+        case Left(RepoError.DuplicateEmail(_)) => assert(true)
+        case other => fail(s"Expected DuplicateEmail, got $other")
     }
   }
 
   test("create user without professional document") {
     transactorResource.use { xa =>
+      val repo = UserRepository.make[IO](xa)
       val email = s"nodoc-${System.currentTimeMillis}@visoris.com"
       val user = User(
         id = System.currentTimeMillis,
@@ -144,8 +152,8 @@ class UserRepositoryImplSpec extends CatsEffectSuite:
         createdAt = Instant.now
       )
       for
-        _     <- repo.create(user).transact(xa)
-        found <- repo.findByEmail(email).transact(xa)
+        _     <- assertCreate(repo, user)
+        found <- repo.findByEmail(email)
       yield
         assert(found.isDefined)
         assertEquals(found.get.professionalDocument, None)

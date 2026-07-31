@@ -2,8 +2,8 @@ package com.visoris.backend.iam.controller
 
 import cats.effect.IO
 import cats.effect.Resource
-import com.visoris.backend.iam.infrastructure.{RefreshTokenRepositoryImpl, UserRepositoryImpl}
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
+import com.visoris.backend.iam.service.RegistrationService
 import doobie.hikari.HikariTransactor
 import io.circe.Json
 import io.circe.parser.*
@@ -182,10 +182,11 @@ class AuthControllerSpec extends CatsEffectSuite:
       _ <- Resource.eval(xa.configure { dataSource =>
         Sync[IO].delay { Flyway.configure().dataSource(dataSource).load().migrate(); () }
       })
-      given UserRepository = UserRepositoryImpl()
-      given RefreshTokenRepository = RefreshTokenRepositoryImpl()
-      authController = AuthController[IO](jwtSecret, xa)
-      httpApp = authController.routes.orNotFound
+      userRepo = UserRepository.make[IO](xa)
+      refreshTokenRepo = RefreshTokenRepository.make[IO](xa)
+      registrationService = RegistrationService.make[IO](jwtSecret, xa, userRepo, refreshTokenRepo)
+      authRoutes = AuthController.routes[IO](registrationService)
+      httpApp = authRoutes.orNotFound
       _ <- EmberServerBuilder.default[IO]
         .withHost(host"0.0.0.0")
         .withPort(port"18080")

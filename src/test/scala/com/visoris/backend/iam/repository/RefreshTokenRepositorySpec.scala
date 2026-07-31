@@ -1,8 +1,6 @@
-package com.visoris.backend.iam.infrastructure
+package com.visoris.backend.iam.repository
 
-import cats.effect.IO
-import cats.effect.Resource
-import cats.effect.Sync
+import cats.effect.{IO, Resource, Sync}
 import com.visoris.backend.iam.domain.User
 import doobie.*
 import doobie.hikari.HikariTransactor
@@ -13,7 +11,7 @@ import org.flywaydb.core.Flyway
 
 import java.time.Instant
 
-class RefreshTokenRepositoryImplSpec extends CatsEffectSuite:
+class RefreshTokenRepositorySpec extends CatsEffectSuite:
 
   private val dbUrl  = sys.env.getOrElse("DB_URL", "jdbc:postgresql://localhost:5432/visoris_db")
   private val dbUser = sys.env.getOrElse("DB_USER", "postgres")
@@ -39,13 +37,13 @@ class RefreshTokenRepositoryImplSpec extends CatsEffectSuite:
 
   private def createTestUser(xa: HikariTransactor[IO]): IO[Long] =
     val userId = System.currentTimeMillis
-    val email = s"rt-test-${userId}@visoris.com"
+    val email = s"rt-test-$userId@visoris.com"
     val user = User(
       id = userId,
       email = email,
       passwordHash = "$2a$12$testhash",
       fullName = "Refresh Token Test User",
-      professionalDocument = Some(s"CRMV-RT-${userId}"),
+      professionalDocument = Some(s"CRMV-RT-$userId"),
       createdAt = Instant.now
     )
     sql"""
@@ -53,16 +51,15 @@ class RefreshTokenRepositoryImplSpec extends CatsEffectSuite:
       VALUES ($userId, $email, ${user.passwordHash}, ${user.fullName}, ${user.professionalDocument}, ${user.createdAt})
     """.update.run.transact(xa).as(userId)
 
-  private val repo = RefreshTokenRepositoryImpl()
-
   test("create token and find by token") {
     transactorResource.use { xa =>
+      val repo = RefreshTokenRepository.make[IO](xa)
       for
         userId <- createTestUser(xa)
         token = java.util.UUID.randomUUID.toString.replace("-", "")
         expiresAt = Instant.now.plusSeconds(604800)
-        _     <- repo.create(userId, token, expiresAt, Some("test-agent"), Some("127.0.0.1")).transact(xa)
-        found <- repo.findByToken(token).transact(xa)
+        _     <- repo.create(userId, token, expiresAt, Some("test-agent"), Some("127.0.0.1"))
+        found <- repo.findByToken(token)
       yield
         assert(found.isDefined)
         assertEquals(found.get.userId, userId)
@@ -75,7 +72,8 @@ class RefreshTokenRepositoryImplSpec extends CatsEffectSuite:
 
   test("findByToken should return None for non-existent token") {
     transactorResource.use { xa =>
-      repo.findByToken("nonexistent-token-12345").transact(xa).map { found =>
+      val repo = RefreshTokenRepository.make[IO](xa)
+      repo.findByToken("nonexistent-token-12345").map { found =>
         assertEquals(found, None)
       }
     }
@@ -83,12 +81,13 @@ class RefreshTokenRepositoryImplSpec extends CatsEffectSuite:
 
   test("create token with null device info and ip address") {
     transactorResource.use { xa =>
+      val repo = RefreshTokenRepository.make[IO](xa)
       for
         userId <- createTestUser(xa)
         token = java.util.UUID.randomUUID.toString.replace("-", "")
         expiresAt = Instant.now.plusSeconds(604800)
-        _     <- repo.create(userId, token, expiresAt, None, None).transact(xa)
-        found <- repo.findByToken(token).transact(xa)
+        _     <- repo.create(userId, token, expiresAt, None, None)
+        found <- repo.findByToken(token)
       yield
         assert(found.isDefined)
         assertEquals(found.get.deviceInfo, None)
