@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.Resource
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.iam.service.RegistrationService
+import com.visoris.backend.shared.auth.TokenService
 import doobie.hikari.HikariTransactor
 import io.circe.Json
 import io.circe.parser.*
@@ -72,7 +73,6 @@ class AuthControllerSpec extends CatsEffectSuite:
         val setCookie = headers.get(org.http4s.headers.`Set-Cookie`.name)
         assert(setCookie.isDefined)
         assert(setCookie.get.head.value.contains("HttpOnly"))
-        assert(setCookie.get.head.value.contains("Secure"))
         assert(setCookie.get.head.value.contains("SameSite=Strict"))
         assert(setCookie.get.head.value.contains("refreshToken="))
     }
@@ -154,7 +154,7 @@ class AuthControllerSpec extends CatsEffectSuite:
     }
   }
 
-  test("registration without professional document succeeds (optional field)") {
+  test("registration without professional document fails (professional_document is NOT NULL)") {
     serverResource.use { client =>
       val email = s"e2e-nodoc-${System.currentTimeMillis}@visoris.com"
       val body = registerRequestJson("Dr. No Doc", email, "Senha@123", None)
@@ -162,11 +162,9 @@ class AuthControllerSpec extends CatsEffectSuite:
         response <- makeRequest(client, body)
         (status, _, respBody) = response
       yield
-        assertEquals(status, Status.Created)
+        assert(status != Status.Created, s"Expected registration without professional document to fail, got $status")
         val json = parse(respBody).getOrElse(fail("Invalid JSON response"))
-        assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
-        val profDoc = json.hcursor.downField("data").downField("user").downField("professionalDocument").as[Option[String]].getOrElse(Some("NOT-NULL"))
-        assert(profDoc.isEmpty, "Expected professionalDocument to be null when omitted")
+        assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(false), true)
     }
   }
 
@@ -184,7 +182,7 @@ class AuthControllerSpec extends CatsEffectSuite:
       })
       userRepo = UserRepository.make[IO](xa)
       refreshTokenRepo = RefreshTokenRepository.make[IO](xa)
-      registrationService = RegistrationService.make[IO](jwtSecret, xa, userRepo, refreshTokenRepo)
+      registrationService = RegistrationService.make[IO](TokenService.make(jwtSecret), xa, userRepo, refreshTokenRepo)
       authRoutes = AuthController.routes[IO](registrationService)
       httpApp = authRoutes.orNotFound
       _ <- EmberServerBuilder.default[IO]

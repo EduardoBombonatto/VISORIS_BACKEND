@@ -6,54 +6,48 @@ import io.circe.generic.auto.*
 import io.circe.parser.*
 import io.circe.syntax.*
 import pdi.jwt.{JwtAlgorithm, JwtCirce, JwtClaim}
-import java.security.SecureRandom
 import java.time.Instant
 
-final case class JwtUserClaims(
-  userId: Long,
-  email: String,
-  clinicId: Option[Long],
-  roles: List[String]
+final case class CustomClaims(
+  userId: String,
+  role: String,
+  tokenType: String
 )
 
-object JwtService:
-  private val algorithm = JwtAlgorithm.HS256
-  private val accessTokenTtlSeconds = 15 * 60L
+trait TokenService:
+  def createAccessToken[F[_]: Sync](claims: CustomClaims): F[String]
+  def createRefreshToken[F[_]: Sync](claims: CustomClaims): F[String]
+  def validateToken[F[_]: Sync](token: String, expectedType: String): F[Option[CustomClaims]]
 
-  def createAccessToken[F[_]: Sync](
-    secret: String,
-    claims: JwtUserClaims
-  ): F[String] =
-    Sync[F].delay {
+object TokenService:
+  private val algorithm = JwtAlgorithm.HS256
+  private val issuer = "api"
+  private val accessTokenTtlSeconds = 900L
+  private val refreshTokenTtlSeconds = 604800L
+
+  def make(secretKey: String): TokenService = new TokenService:
+    private def encode(claims: CustomClaims, ttlSeconds: Long): String =
       val now = Instant.now.getEpochSecond
-      val jsonClaims = claims.asJson.noSpaces
       JwtCirce.encode(
         JwtClaim(
-          content = jsonClaims,
-          expiration = Some(now + accessTokenTtlSeconds),
-          issuedAt = Some(now)
-        ),
-        secret,
+          subject = Some(claims.userId),
+          issuer = Some(issuer),
+          issuedAt = Some(now),
+          expiration = Some(now + ttlSeconds)
+        ).withContent(claims.asJson.noSpaces),
+        secretKey,
         algorithm
       )
-    }
 
-  def createRefreshToken[F[_]: Sync](): F[String] =
-    Sync[F].delay {
-      val random = new SecureRandom()
-      val bytes = new Array[Byte](32)
-      random.nextBytes(bytes)
-      bytes.map("%02x".format(_)).mkString
-    }
+    def createAccessToken[F[_]: Sync](claims: CustomClaims): F[String] =
+      Sync[F].delay(encode(claims.copy(tokenType = "access"), accessTokenTtlSeconds))
 
-  def decodeAndValidate[F[_]: Sync](
-    secret: String,
-    token: String
-  ): F[Either[String, JwtUserClaims]] =
-    Sync[F].delay {
-      JwtCirce.decode(token, secret, Seq(algorithm)).toEither match
-        case Right(claim) =>
-          decode[JwtUserClaims](claim.content).left.map(_.getMessage)
-        case Left(err) =>
-          Left(s"Invalid token: ${err.getMessage}")
-    }
+    def createRefreshToken[F[_]: Sync](claims: CustomClaims): F[String] =
+      Sync[F].delay(encode(claims.copy(tokenType = "refresh"), refreshTokenTtlSeconds))
+
+    def validateToken[F[_]: Sync](token: String, expectedType: String): F[Option[CustomClaims]] =
+      Sync[F].delay {
+        JwtCirce.decode(token, secretKey, Seq(algorithm)).toOption.flatMap { claim =>
+          decode[CustomClaims](claim.content).toOption.filter(_.tokenType == expectedType)
+        }
+      }

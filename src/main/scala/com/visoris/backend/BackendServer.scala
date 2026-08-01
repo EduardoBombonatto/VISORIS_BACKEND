@@ -7,7 +7,7 @@ import com.visoris.backend.config.Database
 import com.visoris.backend.iam.controller.AuthController
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.iam.service.RegistrationService
-import com.visoris.backend.shared.auth.AuthMiddleware
+import com.visoris.backend.shared.auth.{AuthMiddleware, TokenService}
 import com.visoris.backend.shared.dto.ApiResponse
 import fs2.io.net.Network
 import io.circe.syntax.*
@@ -45,10 +45,11 @@ object BackendServer:
       transactor <- Database.makeTransactor[F](dbUrl, dbUser, dbPass)
       _ <- Resource.eval(Database.runMigrations[F](transactor))
 
+      tokenService = TokenService.make(jwtSecret)
       userRepo = UserRepository.make[F](transactor)
       refreshTokenRepo = RefreshTokenRepository.make[F](transactor)
-      registrationService = RegistrationService.make[F](jwtSecret, transactor, userRepo, refreshTokenRepo)
-      authMiddleware = AuthMiddleware.make[F](jwtSecret, userRepo)
+      registrationService = RegistrationService.make[F](tokenService, transactor, userRepo, refreshTokenRepo)
+      authMiddleware = AuthMiddleware.make[F](tokenService, userRepo)
 
       authRoutes = AuthController.routes[F](registrationService)
       httpApp = errorHandler(authRoutes.orNotFound)

@@ -15,6 +15,7 @@ enum RepoError:
 
 trait UserRepository[F[_]]:
   def create(user: User): F[Either[RepoError, Unit]]
+  def findById(id: Long): F[Option[User]]
   def findByEmail(email: String): F[Option[User]]
   def findByProfessionalDocument(doc: String): F[Option[User]]
 
@@ -41,6 +42,12 @@ object UserRepository:
             Async[F].pure(Left(RepoError.Unexpected(e.getMessage)))
         case Right(()) => Async[F].pure(Right(()))
       }
+
+    def findById(id: Long): F[Option[User]] =
+      sql"""
+        SELECT id, email, password_hash, full_name, professional_document, created_at
+        FROM users WHERE id = $id
+      """.query[User].option.transact(transactor)
 
     def findByEmail(email: String): F[Option[User]] =
       sql"""

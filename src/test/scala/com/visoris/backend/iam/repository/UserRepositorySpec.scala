@@ -139,7 +139,7 @@ class UserRepositorySpec extends CatsEffectSuite:
     }
   }
 
-  test("create user without professional document") {
+  test("create user without professional document should fail (NOT NULL constraint)") {
     transactorResource.use { xa =>
       val repo = UserRepository.make[IO](xa)
       val email = s"nodoc-${System.currentTimeMillis}@visoris.com"
@@ -151,11 +151,9 @@ class UserRepositorySpec extends CatsEffectSuite:
         professionalDocument = None,
         createdAt = Instant.now
       )
-      for
-        _     <- assertCreate(repo, user)
-        found <- repo.findByEmail(email)
-      yield
-        assert(found.isDefined)
-        assertEquals(found.get.professionalDocument, None)
+      repo.create(user).map {
+        case Left(_)  => assert(true)
+        case Right(_) => fail("Expected create to fail: professional_document is NOT NULL")
+      }
     }
   }

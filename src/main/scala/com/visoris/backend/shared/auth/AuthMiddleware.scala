@@ -15,7 +15,7 @@ import org.typelevel.log4cats.Logger
 
 object AuthMiddleware:
   def make[F[_]: Async: Logger](
-    jwtSecret: String,
+    tokenService: TokenService,
     userRepo: UserRepository[F]
   ): Http4sAuthMiddleware[F, User] =
     val dsl = new Http4sDsl[F] {}
@@ -28,14 +28,14 @@ object AuthMiddleware:
         }
         tokenOpt match
           case Some(token) =>
-            JwtService.decodeAndValidate[F](jwtSecret, token).flatMap {
-              case Right(claims) =>
-                userRepo.findByEmail(claims.email).map {
+            tokenService.validateToken[F](token, "access").flatMap {
+              case Some(claims) =>
+                userRepo.findById(claims.userId.toLong).map {
                   case Some(user) => Right(user)
                   case None       => Left("Usuário não encontrado")
                 }
-              case Left(err) =>
-                Logger[F].warn(s"Token validation failed: $err") *>
+              case None =>
+                Logger[F].warn("Token validation failed") *>
                   (Left("Token JWT inválido ou expirado"): Either[String, User]).pure[F]
             }
           case None =>

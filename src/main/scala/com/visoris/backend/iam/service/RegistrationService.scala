@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import com.visoris.backend.iam.domain.User
 import com.visoris.backend.iam.dto.{RegisterRequest, ValidationError}
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, RepoError, UserRepository}
-import com.visoris.backend.shared.auth.{JwtService, JwtUserClaims, PasswordHasher}
+import com.visoris.backend.shared.auth.{CustomClaims, PasswordHasher, TokenService}
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
 import org.typelevel.log4cats.Logger
@@ -32,7 +32,7 @@ trait RegistrationService[F[_]]:
 
 object RegistrationService:
   def make[F[_]: Async: Logger](
-    jwtSecret: String,
+    tokenService: TokenService,
     transactor: Transactor[F],
     userRepo: UserRepository[F],
     refreshTokenRepo: RefreshTokenRepository[F]
@@ -112,11 +112,12 @@ object RegistrationService:
         now <- Async[F].delay(Instant.now)
         passwordHash <- PasswordHasher.hash[F](request.password)
         userId <- transactor.trans.apply(sql"SELECT next_id()".query[Long].unique)
-        baseToken <- JwtService.createAccessToken[F](
-          jwtSecret,
-          JwtUserClaims(userId = userId, email = normalizedEmail, clinicId = None, roles = List("DOCTOR"))
+        baseToken <- tokenService.createAccessToken[F](
+          CustomClaims(userId = userId.toString, role = "DOCTOR", tokenType = "access")
         )
-        refreshTokenPlain <- JwtService.createRefreshToken[F]()
+        refreshTokenPlain <- tokenService.createRefreshToken[F](
+          CustomClaims(userId = userId.toString, role = "DOCTOR", tokenType = "refresh")
+        )
         refreshExpires = now.plusSeconds(7 * 24 * 60 * 60)
 
         user = User(
