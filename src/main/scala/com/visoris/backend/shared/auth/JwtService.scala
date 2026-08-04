@@ -10,20 +10,22 @@ import java.time.Instant
 
 final case class CustomClaims(
   userId: String,
-  role: String,
+  email: String,
+  roles: List[String],
+  clinicId: Option[String],
   tokenType: String
 )
 
 trait TokenService:
+  def createBaseToken[F[_]: Sync](claims: CustomClaims): F[String]
   def createAccessToken[F[_]: Sync](claims: CustomClaims): F[String]
-  def createRefreshToken[F[_]: Sync](claims: CustomClaims): F[String]
   def validateToken[F[_]: Sync](token: String, expectedType: String): F[Option[CustomClaims]]
 
 object TokenService:
   private val algorithm = JwtAlgorithm.HS256
   private val issuer = "api"
+  private val baseTokenTtlSeconds = 300L
   private val accessTokenTtlSeconds = 900L
-  private val refreshTokenTtlSeconds = 604800L
 
   def make(secretKey: String): TokenService = new TokenService:
     private def encode(claims: CustomClaims, ttlSeconds: Long): String =
@@ -39,11 +41,11 @@ object TokenService:
         algorithm
       )
 
-    def createAccessToken[F[_]: Sync](claims: CustomClaims): F[String] =
-      Sync[F].delay(encode(claims.copy(tokenType = "access"), accessTokenTtlSeconds))
+    def createBaseToken[F[_]: Sync](claims: CustomClaims): F[String] =
+      Sync[F].delay(encode(claims.copy(clinicId = None, tokenType = "BASE"), baseTokenTtlSeconds))
 
-    def createRefreshToken[F[_]: Sync](claims: CustomClaims): F[String] =
-      Sync[F].delay(encode(claims.copy(tokenType = "refresh"), refreshTokenTtlSeconds))
+    def createAccessToken[F[_]: Sync](claims: CustomClaims): F[String] =
+      Sync[F].delay(encode(claims.copy(tokenType = "ACCESS"), accessTokenTtlSeconds))
 
     def validateToken[F[_]: Sync](token: String, expectedType: String): F[Option[CustomClaims]] =
       Sync[F].delay {

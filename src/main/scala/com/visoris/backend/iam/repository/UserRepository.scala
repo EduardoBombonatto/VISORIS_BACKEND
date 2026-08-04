@@ -1,8 +1,7 @@
 package com.visoris.backend.iam.repository
 
-import cats.effect.Async
 import cats.syntax.all.*
-import com.visoris.backend.iam.domain.User
+import com.visoris.backend.iam.domain.{User, Workspace}
 import doobie.*
 import doobie.implicits.*
 import doobie.implicits.javatimedrivernative.given
@@ -14,18 +13,20 @@ enum RepoError:
   case Unexpected(message: String)
 
 trait UserRepository[F[_]]:
-  def create(user: User): F[Either[RepoError, Unit]]
-  def findById(id: Long): F[Option[User]]
-  def findByEmail(email: String): F[Option[User]]
-  def findByProfessionalDocument(doc: String): F[Option[User]]
+  def create(user: User): ConnectionIO[Either[RepoError, Unit]]
+  def findById(id: Long): ConnectionIO[Option[User]]
+  def findByEmail(email: String): ConnectionIO[Option[User]]
+  def findByProfessionalDocument(doc: String): ConnectionIO[Option[User]]
+  def findWorkspacesByUserId(userId: Long): ConnectionIO[List[Workspace]]
 
 object UserRepository:
-  def make[F[_]: Async](transactor: Transactor[F]): UserRepository[F] = new UserRepository[F]:
-    def create(user: User): F[Either[RepoError, Unit]] =
+  def make[F[_]](transactor: Transactor[F]): UserRepository[F] = new UserRepository[F]:
+    def create(user: User): ConnectionIO[Either[RepoError, Unit]] =
       sql"""
         INSERT INTO users (id, email, password_hash, full_name, professional_document, created_at)
         VALUES (${user.id}, ${user.email.toLowerCase}, ${user.passwordHash}, ${user.fullName}, ${user.professionalDocument}, ${user.createdAt})
-      """.update.run.void.transact(transactor).attempt.flatMap {
+      """.update.run.void.attempt.map {
+        case Right(()) => Right(())
         case Left(e) =>
           val sqle = e match
             case s: java.sql.SQLException => s
@@ -35,28 +36,36 @@ object UserRepository:
           if sqle != null && sqle.getSQLState == "23505" then
             val msg = sqle.getMessage
             if msg != null && msg.contains("professional_document") then
-              Async[F].pure(Left(RepoError.DuplicateProfessionalDocument(user.professionalDocument.getOrElse(""))))
+              Left(RepoError.DuplicateProfessionalDocument(user.professionalDocument.getOrElse("")))
             else
-              Async[F].pure(Left(RepoError.DuplicateEmail(user.email)))
+              Left(RepoError.DuplicateEmail(user.email))
           else
-            Async[F].pure(Left(RepoError.Unexpected(e.getMessage)))
-        case Right(()) => Async[F].pure(Right(()))
+            Left(RepoError.Unexpected(e.getMessage))
       }
 
-    def findById(id: Long): F[Option[User]] =
+    def findById(id: Long): ConnectionIO[Option[User]] =
       sql"""
         SELECT id, email, password_hash, full_name, professional_document, created_at
         FROM users WHERE id = $id
-      """.query[User].option.transact(transactor)
+      """.query[User].option
 
-    def findByEmail(email: String): F[Option[User]] =
+    def findByEmail(email: String): ConnectionIO[Option[User]] =
       sql"""
         SELECT id, email, password_hash, full_name, professional_document, created_at
         FROM users WHERE LOWER(email) = ${email.toLowerCase}
-      """.query[User].option.transact(transactor)
+      """.query[User].option
 
-    def findByProfessionalDocument(doc: String): F[Option[User]] =
+    def findByProfessionalDocument(doc: String): ConnectionIO[Option[User]] =
       sql"""
         SELECT id, email, password_hash, full_name, professional_document, created_at
         FROM users WHERE professional_document = ${doc}
-      """.query[User].option.transact(transactor)
+      """.query[User].option
+
+    def findWorkspacesByUserId(userId: Long): ConnectionIO[List[Workspace]] =
+      sql"""
+        SELECT c.id, c.name, dc.role
+        FROM doctor_clinics dc
+        JOIN clinics c ON c.id = dc.clinic_id
+        WHERE dc.user_id = $userId
+        ORDER BY c.name
+      """.query[Workspace].to[List]

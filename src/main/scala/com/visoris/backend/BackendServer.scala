@@ -6,7 +6,7 @@ import com.comcast.ip4s.*
 import com.visoris.backend.config.Database
 import com.visoris.backend.iam.controller.AuthController
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
-import com.visoris.backend.iam.service.RegistrationService
+import com.visoris.backend.iam.service.{AuthService, RegistrationService}
 import com.visoris.backend.shared.auth.{AuthMiddleware, TokenService}
 import com.visoris.backend.shared.dto.ApiResponse
 import fs2.io.net.Network
@@ -49,9 +49,10 @@ object BackendServer:
       userRepo = UserRepository.make[F](transactor)
       refreshTokenRepo = RefreshTokenRepository.make[F](transactor)
       registrationService = RegistrationService.make[F](tokenService, transactor, userRepo, refreshTokenRepo)
-      authMiddleware = AuthMiddleware.make[F](tokenService, userRepo)
+      authService = AuthService.make[F](tokenService, transactor, userRepo, refreshTokenRepo)
+      authMiddleware = AuthMiddleware.make[F](tokenService, userRepo, transactor)
 
-      authRoutes = AuthController.routes[F](registrationService)
+      authRoutes = AuthController.routes[F](registrationService, authService)
       httpApp = errorHandler(authRoutes.orNotFound)
 
       _ <-

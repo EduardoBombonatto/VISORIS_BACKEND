@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import com.visoris.backend.iam.domain.User
 import com.visoris.backend.iam.dto.{RegisterRequest, ValidationError}
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, RepoError, UserRepository}
-import com.visoris.backend.shared.auth.{CustomClaims, PasswordHasher, TokenService}
+import com.visoris.backend.shared.auth.{CustomClaims, OpaqueTokenGenerator, PasswordHasher, TokenService}
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
 import org.typelevel.log4cats.Logger
@@ -82,7 +82,7 @@ object RegistrationService:
       normalizedEmail: String,
       professionalDocument: Option[String]
     ): F[Either[RegistrationError, Option[String]]] =
-      userRepo.findByEmail(normalizedEmail).flatMap {
+      userRepo.findByEmail(normalizedEmail).transact(transactor).flatMap {
         case Some(_) =>
           Async[F].pure(Left(RegistrationError.DuplicateField("email", "Este e-mail já está cadastrado.")))
         case None =>
@@ -94,7 +94,7 @@ object RegistrationService:
     ): F[Either[RegistrationError, Option[String]]] =
       doc match
         case Some(d) =>
-          userRepo.findByProfessionalDocument(d).map {
+          userRepo.findByProfessionalDocument(d).transact(transactor).map {
             case Some(_) => Left(RegistrationError.DuplicateField("professionalDocument", "Documento profissional já cadastrado."))
             case None => Right(doc)
           }
@@ -112,12 +112,16 @@ object RegistrationService:
         now <- Async[F].delay(Instant.now)
         passwordHash <- PasswordHasher.hash[F](request.password)
         userId <- transactor.trans.apply(sql"SELECT next_id()".query[Long].unique)
-        baseToken <- tokenService.createAccessToken[F](
-          CustomClaims(userId = userId.toString, role = "DOCTOR", tokenType = "access")
+        baseToken <- tokenService.createBaseToken[F](
+          CustomClaims(
+            userId = userId.toString,
+            email = normalizedEmail,
+            roles = List("DOCTOR"),
+            clinicId = None,
+            tokenType = "BASE"
+          )
         )
-        refreshTokenPlain <- tokenService.createRefreshToken[F](
-          CustomClaims(userId = userId.toString, role = "DOCTOR", tokenType = "refresh")
-        )
+        refreshTokenPlain <- OpaqueTokenGenerator.generate[F]
         refreshExpires = now.plusSeconds(7 * 24 * 60 * 60)
 
         user = User(
@@ -129,7 +133,7 @@ object RegistrationService:
           createdAt = now
         )
 
-        createResult <- userRepo.create(user)
+        createResult <- userRepo.create(user).transact(transactor)
         result <- createResult match
           case Left(RepoError.DuplicateEmail(_)) =>
             Async[F].pure(Left(RegistrationError.DuplicateField("email", "Este e-mail já está cadastrado.")))
@@ -139,7 +143,7 @@ object RegistrationService:
             Logger[F].error(s"Registration internal error for email=$maskedEmail: $msg") *>
               Async[F].pure(Left(RegistrationError.Internal("Erro interno do servidor. Tente novamente.")))
           case Right(()) =>
-            refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress).as(
+            refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress).transact(transactor).as(
               Right(RegistrationResult(baseToken, user, refreshTokenPlain))
             )
       yield result).flatTap {

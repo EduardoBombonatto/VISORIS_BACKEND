@@ -10,6 +10,6 @@ object CookieUtils:
       httpOnly = true,
       secure = isSecure,
       sameSite = Some(SameSite.Strict),
-      path = Some("/auth/refresh"),
+      path = Some("/api/v1/auth"),
       maxAge = Some(604800L)
     )

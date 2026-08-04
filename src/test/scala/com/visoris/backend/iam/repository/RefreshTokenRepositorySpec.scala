@@ -58,8 +58,8 @@ class RefreshTokenRepositorySpec extends CatsEffectSuite:
         userId <- createTestUser(xa)
         token = java.util.UUID.randomUUID.toString.replace("-", "")
         expiresAt = Instant.now.plusSeconds(604800)
-        _     <- repo.create(userId, token, expiresAt, Some("test-agent"), Some("127.0.0.1"))
-        found <- repo.findByToken(token)
+        _     <- repo.create(userId, token, expiresAt, Some("test-agent"), Some("127.0.0.1")).transact(xa)
+        found <- repo.findByToken(token).transact(xa)
       yield
         assert(found.isDefined)
         assertEquals(found.get.userId, userId)
@@ -73,7 +73,7 @@ class RefreshTokenRepositorySpec extends CatsEffectSuite:
   test("findByToken should return None for non-existent token") {
     transactorResource.use { xa =>
       val repo = RefreshTokenRepository.make[IO](xa)
-      repo.findByToken("nonexistent-token-12345").map { found =>
+      repo.findByToken("nonexistent-token-12345").transact(xa).map { found =>
         assertEquals(found, None)
       }
     }
@@ -86,11 +86,66 @@ class RefreshTokenRepositorySpec extends CatsEffectSuite:
         userId <- createTestUser(xa)
         token = java.util.UUID.randomUUID.toString.replace("-", "")
         expiresAt = Instant.now.plusSeconds(604800)
-        _     <- repo.create(userId, token, expiresAt, None, None)
-        found <- repo.findByToken(token)
+        _     <- repo.create(userId, token, expiresAt, None, None).transact(xa)
+        found <- repo.findByToken(token).transact(xa)
       yield
         assert(found.isDefined)
         assertEquals(found.get.deviceInfo, None)
         assertEquals(found.get.ipAddress, None)
+    }
+  }
+
+  test("revokeByToken marks token as revoked") {
+    transactorResource.use { xa =>
+      val repo = RefreshTokenRepository.make[IO](xa)
+      for
+        userId <- createTestUser(xa)
+        token = java.util.UUID.randomUUID.toString.replace("-", "")
+        expiresAt = Instant.now.plusSeconds(604800)
+        _ <- repo.create(userId, token, expiresAt, Some("agent"), Some("1.2.3.4")).transact(xa)
+        found1 <- repo.findByToken(token).transact(xa)
+        _ = assert(found1.isDefined && !found1.get.isRevoked)
+        rows <- repo.revokeByToken(token).transact(xa)
+        found2 <- repo.findByToken(token).transact(xa)
+      yield
+        assertEquals(rows, 1)
+        assert(found2.isDefined)
+        assert(found2.get.isRevoked)
+    }
+  }
+
+  test("revokeAllByUserId revokes all active tokens for a user") {
+    transactorResource.use { xa =>
+      val repo = RefreshTokenRepository.make[IO](xa)
+      for
+        userId <- createTestUser(xa)
+        tok1 = java.util.UUID.randomUUID.toString.replace("-", "")
+        tok2 = java.util.UUID.randomUUID.toString.replace("-", "")
+        expiresAt = Instant.now.plusSeconds(604800)
+        _ <- repo.create(userId, tok1, expiresAt, None, None).transact(xa)
+        _ <- repo.create(userId, tok2, expiresAt, None, None).transact(xa)
+        rows <- repo.revokeAllByUserId(userId).transact(xa)
+        found1 <- repo.findByToken(tok1).transact(xa)
+        found2 <- repo.findByToken(tok2).transact(xa)
+      yield
+        assertEquals(rows, 2)
+        assert(found1.get.isRevoked)
+        assert(found2.get.isRevoked)
+    }
+  }
+
+  test("revokeAllByUserId does not affect other users") {
+    transactorResource.use { xa =>
+      val repo = RefreshTokenRepository.make[IO](xa)
+      for
+        user1 <- createTestUser(xa)
+        tok1 = java.util.UUID.randomUUID.toString.replace("-", "")
+        expiresAt = Instant.now.plusSeconds(604800)
+        _ <- repo.create(user1, tok1, expiresAt, None, None).transact(xa)
+        rows <- repo.revokeAllByUserId(user1 + 99999).transact(xa)
+        found1 <- repo.findByToken(tok1).transact(xa)
+      yield
+        assertEquals(rows, 0)
+        assert(!found1.get.isRevoked)
     }
   }

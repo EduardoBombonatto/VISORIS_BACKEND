@@ -3,7 +3,7 @@ package com.visoris.backend.iam.controller
 import cats.effect.IO
 import cats.effect.Resource
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
-import com.visoris.backend.iam.service.RegistrationService
+import com.visoris.backend.iam.service.{AuthService, RegistrationService}
 import com.visoris.backend.shared.auth.TokenService
 import doobie.hikari.HikariTransactor
 import io.circe.Json
@@ -52,6 +52,12 @@ class AuthControllerSpec extends CatsEffectSuite:
     client.run(req).use { resp =>
       resp.as[String].map(body => (resp.status, resp.headers, body))
     }
+
+  private def loginRequestJson(email: String, password: String): Json =
+    Json.obj(
+      "email" -> Json.fromString(email),
+      "password" -> Json.fromString(password)
+    )
 
   test("T041: happy path — registration returns 201 with baseToken, user data, and Set-Cookie") {
     serverResource.use { client =>
@@ -183,7 +189,8 @@ class AuthControllerSpec extends CatsEffectSuite:
       userRepo = UserRepository.make[IO](xa)
       refreshTokenRepo = RefreshTokenRepository.make[IO](xa)
       registrationService = RegistrationService.make[IO](TokenService.make(jwtSecret), xa, userRepo, refreshTokenRepo)
-      authRoutes = AuthController.routes[IO](registrationService)
+      authService = AuthService.make[IO](TokenService.make(jwtSecret), xa, userRepo, refreshTokenRepo)
+      authRoutes = AuthController.routes[IO](registrationService, authService)
       httpApp = authRoutes.orNotFound
       _ <- EmberServerBuilder.default[IO]
         .withHost(host"0.0.0.0")
@@ -192,3 +199,123 @@ class AuthControllerSpec extends CatsEffectSuite:
         .build
       client <- EmberClientBuilder.default[IO].build
     yield client
+
+  test("login: happy path returns 200 with baseToken, user data, and Set-Cookie") {
+    serverResource.use { client =>
+      val email = s"e2e-login-${System.currentTimeMillis}@visoris.com"
+      val password = "Senha@123"
+      val doc = s"CRMV-LOGIN-${System.currentTimeMillis}"
+      val registerBody = registerRequestJson("Dr. Login", email, password, Some(doc))
+      for
+        _ <- makeRequest(client, registerBody)
+        loginJson = loginRequestJson(email, password)
+        loginReq = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "login")
+          .withEntity(loginJson)
+        loginResp <- client.run(loginReq).use { resp =>
+          resp.as[String].map(body => (resp.status, resp.headers, body))
+        }
+      yield
+        val (status, headers, respBody) = loginResp
+        assertEquals(status, Status.Ok)
+        val json = parse(respBody).getOrElse(fail("Invalid JSON response"))
+        assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
+        assertEquals(json.hcursor.downField("httpcode").as[Int].getOrElse(0), 200)
+        assert(json.hcursor.downField("data").downField("baseToken").as[String].getOrElse("").nonEmpty)
+        assertEquals(json.hcursor.downField("data").downField("user").downField("fullName").as[String].getOrElse(""), "Dr. Login")
+        val workspaces = json.hcursor.downField("data").downField("workspaces").as[List[Json]].getOrElse(Nil)
+        assert(workspaces.isEmpty)
+        val setCookie = headers.get(org.http4s.headers.`Set-Cookie`.name)
+        assert(setCookie.isDefined)
+        assert(setCookie.get.head.value.contains("HttpOnly"))
+        assert(setCookie.get.head.value.contains("SameSite=Strict"))
+    }
+  }
+
+  test("refresh: returns accessToken and new Set-Cookie, old token revoked") {
+    serverResource.use { client =>
+      val email = s"e2e-refresh-${System.currentTimeMillis}@visoris.com"
+      val password = "Senha@123"
+      val doc = s"CRMV-REFRESH-${System.currentTimeMillis}"
+      val registerBody = registerRequestJson("Dr. Refresh", email, password, Some(doc))
+      for
+        _ <- makeRequest(client, registerBody)
+        loginJson = loginRequestJson(email, password)
+        loginReq = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "login")
+          .withEntity(loginJson)
+        loginResp <- client.run(loginReq).use { resp =>
+          resp.as[String].map(body => (resp.headers, body))
+        }
+        (loginHeaders, _) = loginResp
+        oldCookie = loginHeaders.get(org.http4s.headers.`Set-Cookie`.name).get.head
+        oldCookieValue = oldCookie.value.split(";").headOption.filter(_.startsWith("refreshToken=")).map(_.stripPrefix("refreshToken=")).getOrElse("")
+
+        refreshReq: Request[IO] = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "refresh")
+          .putHeaders(org.http4s.headers.Cookie(org.http4s.RequestCookie("refreshToken", oldCookieValue)))
+        refreshResp <- client.run(refreshReq).use { resp =>
+          resp.as[String].map(body => (resp.status, resp.headers, body))
+        }
+        (refreshStatus, refreshHeaders, refreshBody) = refreshResp
+
+        _ <- IO(assertEquals(refreshStatus, Status.Ok))
+        refreshJson = parse(refreshBody).getOrElse(fail("Invalid JSON response"))
+        _ = assertEquals(refreshJson.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
+        _ = assert(refreshJson.hcursor.downField("data").downField("accessToken").as[String].getOrElse("").nonEmpty)
+        _ = assertEquals(refreshJson.hcursor.downField("data").downField("expiresIn").as[Int].getOrElse(0), 900)
+
+        newCookie = refreshHeaders.get(org.http4s.headers.`Set-Cookie`.name).get.head
+        newCookieValue = newCookie.value.split(";").headOption.filter(_.startsWith("refreshToken=")).getOrElse("")
+        _ = assert(newCookieValue != oldCookieValue, "New refresh token cookie should differ from old one")
+
+        replayReq: Request[IO] = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "refresh")
+          .putHeaders(org.http4s.headers.Cookie(org.http4s.RequestCookie("refreshToken", oldCookieValue)))
+        replayResp <- client.run(replayReq).use { resp =>
+          resp.as[String].map(body => (resp.status, body))
+        }
+        (replayStatus, _) = replayResp
+      yield
+        assertEquals(replayStatus, Status.Unauthorized)
+    }
+  }
+
+  test("refresh: no cookie returns 401") {
+    serverResource.use { client =>
+      val req = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "refresh")
+      client.run(req).use { resp =>
+        IO(assertEquals(resp.status, Status.Unauthorized))
+      }
+    }
+  }
+
+  test("login: wrong password returns 401 with generic message") {
+    serverResource.use { client =>
+      val email = s"e2e-badpw-${System.currentTimeMillis}@visoris.com"
+      val doc = s"CRMV-BADPW-${System.currentTimeMillis}"
+      val registerBody = registerRequestJson("Dr. BadPass", email, "Correct@1", Some(doc))
+      for
+        _ <- makeRequest(client, registerBody)
+        loginJson = loginRequestJson(email, "WrongPassword")
+        loginReq = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "login")
+          .withEntity(loginJson)
+        resp <- client.run(loginReq).use { r => r.as[String].map(body => (r.status, r.headers, body)) }
+      yield
+        val (status, headers, body) = resp
+        assertEquals(status, Status.Unauthorized)
+        val json = parse(body).getOrElse(fail("Invalid JSON response"))
+        assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(false), true)
+        assertEquals(json.hcursor.downField("httpcode").as[Int].getOrElse(0), 401)
+        assert(headers.get(org.http4s.headers.`Set-Cookie`.name).isEmpty)
+    }
+  }
+
+  test("login: unknown email returns 401 with same generic message") {
+    serverResource.use { client =>
+      val loginJson = loginRequestJson(s"nonexistent-${System.currentTimeMillis}@visoris.com", "AnyPass@1")
+      val loginReq = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "login")
+        .withEntity(loginJson)
+      client.run(loginReq).use { r => r.as[String].map(body => (r.status, body)) }.map { (status, body) =>
+        assertEquals(status, Status.Unauthorized)
+        val json = parse(body).getOrElse(fail("Invalid JSON response"))
+        assertEquals(json.hcursor.downField("message").as[String].getOrElse(""), "Credenciais inválidas.")
+      }
+    }
+  }
