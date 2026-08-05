@@ -31,7 +31,8 @@ final case class RegisterRequest(
     List(
       Option.when(fullName.isBlank)(ValidationError("fullName", "Nome completo é obrigatório.")),
       Option.when(email.isBlank)(ValidationError("email", "E-mail é obrigatório.")),
-      Option.when(password.isBlank)(ValidationError("password", "Senha é obrigatória."))
+      Option.when(password.isBlank)(ValidationError("password", "Senha é obrigatória.")),
+      Option.when(professionalDocument.forall(_.isBlank))(ValidationError("professionalDocument", "Documento profissional é obrigatório."))
     ).flatten
 
   private def validateEmailFormat: Option[ValidationError] =
