@@ -13,7 +13,6 @@ object UserData:
   given Encoder[UserData] = deriveEncoder
 
 final case class RegisterResponse(
-  baseToken: String,
   user: UserData,
   workspaces: List[String]
 )

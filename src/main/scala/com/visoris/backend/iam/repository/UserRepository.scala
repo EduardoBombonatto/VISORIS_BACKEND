@@ -18,6 +18,7 @@ trait UserRepository[F[_]]:
   def findByEmail(email: String): ConnectionIO[Option[User]]
   def findByProfessionalDocument(doc: String): ConnectionIO[Option[User]]
   def findWorkspacesByUserId(userId: Long): ConnectionIO[List[Workspace]]
+  def findMembershipByUserIdAndClinicId(userId: Long, clinicId: Long): ConnectionIO[Option[Workspace]]
 
 object UserRepository:
   def make[F[_]](transactor: Transactor[F]): UserRepository[F] = new UserRepository[F]:
@@ -69,3 +70,11 @@ object UserRepository:
         WHERE dc.user_id = $userId
         ORDER BY c.name
       """.query[Workspace].to[List]
+
+    def findMembershipByUserIdAndClinicId(userId: Long, clinicId: Long): ConnectionIO[Option[Workspace]] =
+      sql"""
+        SELECT c.id, c.name, dc.role
+        FROM doctor_clinics dc
+        JOIN clinics c ON c.id = dc.clinic_id
+        WHERE dc.user_id = $userId AND dc.clinic_id = $clinicId
+      """.query[Workspace].option

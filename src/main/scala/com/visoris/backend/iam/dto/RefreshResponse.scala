@@ -4,7 +4,6 @@ import io.circe.Encoder
 import io.circe.generic.semiauto.deriveEncoder
 
 final case class RefreshResponse(
-  accessToken: String,
   expiresIn: Int
 )
 

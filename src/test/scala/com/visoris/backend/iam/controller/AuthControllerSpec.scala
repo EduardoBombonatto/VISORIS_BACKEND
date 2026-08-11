@@ -3,8 +3,8 @@ package com.visoris.backend.iam.controller
 import cats.effect.IO
 import cats.effect.Resource
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
-import com.visoris.backend.iam.service.{AuthService, RegistrationService}
-import com.visoris.backend.shared.auth.TokenService
+import com.visoris.backend.iam.service.{AuthService, RegistrationService, WorkspaceService}
+import com.visoris.backend.shared.auth.{TokenBlacklist, TokenService}
 import doobie.hikari.HikariTransactor
 import io.circe.Json
 import io.circe.parser.*
@@ -59,7 +59,7 @@ class AuthControllerSpec extends CatsEffectSuite:
       "password" -> Json.fromString(password)
     )
 
-  test("T041: happy path — registration returns 201 with baseToken, user data, and Set-Cookie") {
+  test("T041: happy path — registration returns 201 with user data and Set-Cookie (baseToken + refreshToken)") {
     serverResource.use { client =>
       val email = s"e2e-happy-${System.currentTimeMillis}@visoris.com"
       val doc = s"CRMV-E2E-HAPPY-${System.currentTimeMillis}"
@@ -72,15 +72,16 @@ class AuthControllerSpec extends CatsEffectSuite:
         val json = parse(respBody).getOrElse(fail("Invalid JSON response"))
         assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
         assertEquals(json.hcursor.downField("httpcode").as[Int].getOrElse(0), 201)
-        assert(json.hcursor.downField("data").downField("baseToken").as[String].getOrElse("").nonEmpty)
         assertEquals(json.hcursor.downField("data").downField("user").downField("fullName").as[String].getOrElse(""), "Dr. Happy Path")
         val workspaces = json.hcursor.downField("data").downField("workspaces").as[List[String]].getOrElse(null)
         assert(workspaces == List.empty)
-        val setCookie = headers.get(org.http4s.headers.`Set-Cookie`.name)
-        assert(setCookie.isDefined)
-        assert(setCookie.get.head.value.contains("HttpOnly"))
-        assert(setCookie.get.head.value.contains("SameSite=Strict"))
-        assert(setCookie.get.head.value.contains("refreshToken="))
+        val setCookies = headers.headers
+          .filter(_.name == org.http4s.headers.`Set-Cookie`.name)
+          .map(_.value)
+        assert(setCookies.exists(_.contains("refreshToken=")), "Expected refreshToken cookie")
+        assert(setCookies.exists(_.contains("HttpOnly")), "Expected HttpOnly flag")
+        assert(setCookies.exists(_.contains("SameSite=Strict")), "Expected SameSite=Strict")
+        assert(setCookies.exists(_.contains("baseToken=")), "Expected baseToken cookie")
     }
   }
 
@@ -190,7 +191,9 @@ class AuthControllerSpec extends CatsEffectSuite:
       refreshTokenRepo = RefreshTokenRepository.make[IO](xa)
       registrationService = RegistrationService.make[IO](TokenService.make(jwtSecret), xa, userRepo, refreshTokenRepo)
       authService = AuthService.make[IO](TokenService.make(jwtSecret), xa, userRepo, refreshTokenRepo)
-      authRoutes = AuthController.routes[IO](registrationService, authService)
+      tokenBlacklist <- Resource.eval(TokenBlacklist.make[IO])
+      workspaceService = WorkspaceService.make[IO](TokenService.make(jwtSecret), tokenBlacklist, xa, userRepo, refreshTokenRepo)
+      authRoutes = AuthController.routes[IO](registrationService, authService, workspaceService)
       httpApp = authRoutes.orNotFound
       _ <- EmberServerBuilder.default[IO]
         .withHost(host"0.0.0.0")
@@ -200,7 +203,7 @@ class AuthControllerSpec extends CatsEffectSuite:
       client <- EmberClientBuilder.default[IO].build
     yield client
 
-  test("login: happy path returns 200 with baseToken, user data, and Set-Cookie") {
+  test("login: happy path returns 200 with user data and Set-Cookie (baseToken + refreshToken)") {
     serverResource.use { client =>
       val email = s"e2e-login-${System.currentTimeMillis}@visoris.com"
       val password = "Senha@123"
@@ -220,18 +223,20 @@ class AuthControllerSpec extends CatsEffectSuite:
         val json = parse(respBody).getOrElse(fail("Invalid JSON response"))
         assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
         assertEquals(json.hcursor.downField("httpcode").as[Int].getOrElse(0), 200)
-        assert(json.hcursor.downField("data").downField("baseToken").as[String].getOrElse("").nonEmpty)
         assertEquals(json.hcursor.downField("data").downField("user").downField("fullName").as[String].getOrElse(""), "Dr. Login")
         val workspaces = json.hcursor.downField("data").downField("workspaces").as[List[Json]].getOrElse(Nil)
         assert(workspaces.isEmpty)
-        val setCookie = headers.get(org.http4s.headers.`Set-Cookie`.name)
-        assert(setCookie.isDefined)
-        assert(setCookie.get.head.value.contains("HttpOnly"))
-        assert(setCookie.get.head.value.contains("SameSite=Strict"))
+        val setCookies = headers.headers
+          .filter(_.name == org.http4s.headers.`Set-Cookie`.name)
+          .map(_.value)
+        assert(setCookies.exists(_.contains("refreshToken=")), "Expected refreshToken cookie")
+        assert(setCookies.exists(_.contains("baseToken=")), "Expected baseToken cookie")
+        assert(setCookies.exists(_.contains("HttpOnly")), "Expected HttpOnly flag")
+        assert(setCookies.exists(_.contains("SameSite=Strict")), "Expected SameSite=Strict")
     }
   }
 
-  test("refresh: returns accessToken and new Set-Cookie, old token revoked") {
+  test("refresh: returns expiresIn and new Set-Cookie (accessToken + refreshToken), old token revoked") {
     serverResource.use { client =>
       val email = s"e2e-refresh-${System.currentTimeMillis}@visoris.com"
       val password = "Senha@123"
@@ -246,7 +251,9 @@ class AuthControllerSpec extends CatsEffectSuite:
           resp.as[String].map(body => (resp.headers, body))
         }
         (loginHeaders, _) = loginResp
-        oldCookie = loginHeaders.get(org.http4s.headers.`Set-Cookie`.name).get.head
+        oldCookie = loginHeaders.headers
+          .find(h => h.name == org.http4s.headers.`Set-Cookie`.name && h.value.contains("refreshToken="))
+          .getOrElse(fail("No refreshToken cookie in login response"))
         oldCookieValue = oldCookie.value.split(";").headOption.filter(_.startsWith("refreshToken=")).map(_.stripPrefix("refreshToken=")).getOrElse("")
 
         refreshReq: Request[IO] = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "refresh")
@@ -259,10 +266,17 @@ class AuthControllerSpec extends CatsEffectSuite:
         _ <- IO(assertEquals(refreshStatus, Status.Ok))
         refreshJson = parse(refreshBody).getOrElse(fail("Invalid JSON response"))
         _ = assertEquals(refreshJson.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
-        _ = assert(refreshJson.hcursor.downField("data").downField("accessToken").as[String].getOrElse("").nonEmpty)
         _ = assertEquals(refreshJson.hcursor.downField("data").downField("expiresIn").as[Int].getOrElse(0), 900)
 
-        newCookie = refreshHeaders.get(org.http4s.headers.`Set-Cookie`.name).get.head
+        setCookies = refreshHeaders.headers
+          .filter(_.name == org.http4s.headers.`Set-Cookie`.name)
+          .map(_.value)
+        _ = assert(setCookies.exists(_.contains("accessToken=")), "Expected accessToken cookie in response")
+        _ = assert(setCookies.exists(_.contains("refreshToken=")), "Expected refreshToken cookie in response")
+
+        newCookie = refreshHeaders.headers
+          .find(h => h.name == org.http4s.headers.`Set-Cookie`.name && h.value.contains("refreshToken="))
+          .getOrElse(fail("No refreshToken cookie found"))
         newCookieValue = newCookie.value.split(";").headOption.filter(_.startsWith("refreshToken=")).getOrElse("")
         _ = assert(newCookieValue != oldCookieValue, "New refresh token cookie should differ from old one")
 

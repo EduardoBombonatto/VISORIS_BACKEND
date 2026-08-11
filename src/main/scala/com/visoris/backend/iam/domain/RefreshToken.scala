@@ -10,5 +10,7 @@ final case class RefreshToken(
   isRevoked: Boolean,
   deviceInfo: Option[String],
   ipAddress: Option[String],
+  clinicId: Option[Long],
+  role: Option[String],
   createdAt: Instant
 )

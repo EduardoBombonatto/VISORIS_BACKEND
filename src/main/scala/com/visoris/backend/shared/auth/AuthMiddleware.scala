@@ -10,8 +10,6 @@ import doobie.implicits.*
 import doobie.util.transactor.Transactor
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
-import org.http4s.dsl.Http4sDsl
-import org.http4s.headers.{Authorization, `WWW-Authenticate`}
 import org.http4s.server.{AuthMiddleware => Http4sAuthMiddleware}
 import org.typelevel.log4cats.Logger
 
@@ -21,17 +19,13 @@ object AuthMiddleware:
     userRepo: UserRepository[F],
     transactor: Transactor[F]
   ): Http4sAuthMiddleware[F, User] =
-    val dsl = new Http4sDsl[F] {}
-    import dsl.*
 
     val authUser: Kleisli[F, Request[F], Either[String, User]] =
       Kleisli { req =>
-        val tokenOpt = req.headers.get[Authorization].map(_.credentials).collect {
-          case Credentials.Token(AuthScheme.Bearer, token) => token
-        }
+        val tokenOpt = req.cookies.find(_.name == "accessToken").map(_.content)
         tokenOpt match
           case Some(token) =>
-            tokenService.validateToken[F](token, "access").flatMap {
+            tokenService.validateToken[F](token, "ACCESS").flatMap {
               case Some(claims) =>
                 userRepo.findById(claims.userId.toLong).transact(transactor).map {
                   case Some(user) => Right(user)
@@ -42,15 +36,15 @@ object AuthMiddleware:
                   (Left("Token JWT inválido ou expirado"): Either[String, User]).pure[F]
             }
           case None =>
-            (Left("Cabeçalho Authorization com Bearer ausente"): Either[String, User]).pure[F]
+            (Left("Cookie accessToken ausente"): Either[String, User]).pure[F]
       }
 
     val onFailure: AuthedRoutes[String, F] =
       Kleisli { req =>
         OptionT.liftF(
-          Unauthorized(
-            `WWW-Authenticate`(Challenge("Bearer", "visoris-api")),
-            ApiResponse.error(req.context, 401)
+          Async[F].pure(
+            Response[F](status = Status.Unauthorized)
+              .withEntity(ApiResponse.error(req.context, 401))
           )
         )
       }

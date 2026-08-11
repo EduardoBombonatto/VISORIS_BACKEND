@@ -225,3 +225,51 @@ class UserRepositorySpec extends CatsEffectSuite:
       }
     }
   }
+
+  test("findMembershipByUserIdAndClinicId returns workspace when membership exists") {
+    transactorResource.use { xa =>
+      val repo = UserRepository.make[IO](xa)
+      val userId = System.currentTimeMillis
+      val email = s"memb-${userId}@visoris.com"
+      val doc = s"DOC-MEMB-$userId"
+      val clinicId = userId + 1
+      for
+        _ <- sql"INSERT INTO users (id, email, password_hash, full_name, professional_document) VALUES ($userId, $email, 'hash', 'Memb Test', $doc)".update.run.transact(xa)
+        _ <- sql"INSERT INTO clinics (id, name) VALUES ($clinicId, 'Memb Clinic')".update.run.transact(xa)
+        _ <- sql"INSERT INTO doctor_clinics (user_id, clinic_id, role) VALUES ($userId, $clinicId, 'OWNER')".update.run.transact(xa)
+        result <- repo.findMembershipByUserIdAndClinicId(userId, clinicId).transact(xa)
+      yield
+        assert(result.isDefined)
+        assertEquals(result.get.clinicId, clinicId)
+        assertEquals(result.get.name, "Memb Clinic")
+        assertEquals(result.get.role, "OWNER")
+    }
+  }
+
+  test("findMembershipByUserIdAndClinicId returns None when user is not a member") {
+    transactorResource.use { xa =>
+      val repo = UserRepository.make[IO](xa)
+      val userId = System.currentTimeMillis
+      val email = s"nomemb-${userId}@visoris.com"
+      val doc = s"DOC-NOMEMB-$userId"
+      for
+        _ <- sql"INSERT INTO users (id, email, password_hash, full_name, professional_document) VALUES ($userId, $email, 'hash', 'No Memb', $doc)".update.run.transact(xa)
+        result <- repo.findMembershipByUserIdAndClinicId(userId, Long.MaxValue).transact(xa)
+      yield
+        assertEquals(result, None)
+    }
+  }
+
+  test("findMembershipByUserIdAndClinicId returns None when clinic does not exist") {
+    transactorResource.use { xa =>
+      val repo = UserRepository.make[IO](xa)
+      val userId = System.currentTimeMillis
+      val email = s"noclinic-${userId}@visoris.com"
+      val doc = s"DOC-NOCLINIC-$userId"
+      for
+        _ <- sql"INSERT INTO users (id, email, password_hash, full_name, professional_document) VALUES ($userId, $email, 'hash', 'No Clinic', $doc)".update.run.transact(xa)
+        result <- repo.findMembershipByUserIdAndClinicId(userId, Long.MaxValue).transact(xa)
+      yield
+        assertEquals(result, None)
+    }
+  }

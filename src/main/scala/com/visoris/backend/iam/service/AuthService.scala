@@ -101,7 +101,7 @@ object AuthService:
                     )
                     refreshTokenPlain <- OpaqueTokenGenerator.generate[F]
                     refreshExpires = now.plusSeconds(7 * 24 * 60 * 60)
-                    _ <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress).transact(transactor)
+                    _ <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress, None, None).transact(transactor)
                     _ <- Logger[F].info(s"Login successful for email=$masked")
                   yield Right(LoginResult(baseToken, user, workspaces, refreshTokenPlain))
               }
@@ -132,8 +132,8 @@ object AuthService:
                 CustomClaims(
                   userId = rt.userId.toString,
                   email = user.fold("")(_.email),
-                  roles = List("DOCTOR"),
-                  clinicId = None,
+                  roles = List(rt.role.getOrElse("DOCTOR")),
+                  clinicId = rt.clinicId.map(_.toString),
                   tokenType = "ACCESS"
                 )
               )
@@ -141,7 +141,7 @@ object AuthService:
               newExpires = now.plusSeconds(7 * 24 * 60 * 60)
               _ <- (for
                 _ <- refreshTokenRepo.revokeByToken(cookieToken)
-                _ <- refreshTokenRepo.create(rt.userId, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress)
+                _ <- refreshTokenRepo.create(rt.userId, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress, rt.clinicId, rt.role)
               yield ()).transact(transactor)
               _ <- Logger[F].info(s"Refresh successful for user=${rt.userId}")
             yield Right(RefreshResult(accessToken, 900, newRefreshToken))

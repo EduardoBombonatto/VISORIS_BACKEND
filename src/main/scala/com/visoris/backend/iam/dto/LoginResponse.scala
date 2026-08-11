@@ -13,7 +13,6 @@ object WorkspaceData:
   given Encoder[WorkspaceData] = deriveEncoder
 
 final case class LoginResponse(
-  baseToken: String,
   user: UserData,
   workspaces: List[WorkspaceData]
 )

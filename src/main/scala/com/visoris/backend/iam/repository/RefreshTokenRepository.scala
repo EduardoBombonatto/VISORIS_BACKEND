@@ -9,22 +9,22 @@ import doobie.util.transactor.Transactor
 import java.time.Instant
 
 trait RefreshTokenRepository[F[_]]:
-  def create(userId: Long, token: String, expiresAt: Instant, deviceInfo: Option[String], ipAddress: Option[String]): ConnectionIO[Unit]
+  def create(userId: Long, token: String, expiresAt: Instant, deviceInfo: Option[String], ipAddress: Option[String], clinicId: Option[Long], role: Option[String]): ConnectionIO[Unit]
   def findByToken(token: String): ConnectionIO[Option[RefreshToken]]
   def revokeByToken(token: String): ConnectionIO[Int]
   def revokeAllByUserId(userId: Long): ConnectionIO[Int]
 
 object RefreshTokenRepository:
   def make[F[_]](transactor: Transactor[F]): RefreshTokenRepository[F] = new RefreshTokenRepository[F]:
-    def create(userId: Long, token: String, expiresAt: Instant, deviceInfo: Option[String], ipAddress: Option[String]): ConnectionIO[Unit] =
+    def create(userId: Long, token: String, expiresAt: Instant, deviceInfo: Option[String], ipAddress: Option[String], clinicId: Option[Long], role: Option[String]): ConnectionIO[Unit] =
       sql"""
-        INSERT INTO refresh_tokens (user_id, token, expires_at, is_revoked, device_info, ip_address)
-        VALUES ($userId, $token, $expiresAt, false, $deviceInfo, $ipAddress)
+        INSERT INTO refresh_tokens (user_id, token, expires_at, is_revoked, device_info, ip_address, clinic_id, role)
+        VALUES ($userId, $token, $expiresAt, false, $deviceInfo, $ipAddress, $clinicId, $role)
       """.update.run.void
 
     def findByToken(token: String): ConnectionIO[Option[RefreshToken]] =
       sql"""
-        SELECT id, user_id, token, expires_at, is_revoked, device_info, ip_address, created_at
+        SELECT id, user_id, token, expires_at, is_revoked, device_info, ip_address, clinic_id, role, created_at
         FROM refresh_tokens WHERE token = $token
       """.query[RefreshToken].option
 

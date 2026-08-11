@@ -67,6 +67,8 @@ CREATE TABLE refresh_tokens
 (
     id          BIGINT PRIMARY KEY                DEFAULT next_id(),
     user_id     BIGINT                   NOT NULL,
+    clinic_id   BIGINT,
+    role        VARCHAR(50),
     token       VARCHAR(512) UNIQUE      NOT NULL,
     expires_at  TIMESTAMP WITH TIME ZONE NOT NULL,
     is_revoked  BOOLEAN                  NOT NULL DEFAULT FALSE,
@@ -99,6 +101,10 @@ CREATE TABLE clinics
     created_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE refresh_tokens
+    ADD CONSTRAINT fk_refresh_tokens_clinic
+        FOREIGN KEY (clinic_id) REFERENCES clinics (id) ON DELETE CASCADE;
 
 -- Tabela de Junção (Mitigação para Escala B2B)
 CREATE TABLE doctor_clinics

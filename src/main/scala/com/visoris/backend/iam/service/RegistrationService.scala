@@ -143,7 +143,7 @@ object RegistrationService:
             Logger[F].error(s"Registration internal error for email=$maskedEmail: $msg") *>
               Async[F].pure(Left(RegistrationError.Internal("Erro interno do servidor. Tente novamente.")))
           case Right(()) =>
-            refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress).transact(transactor).as(
+            refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress, None, None).transact(transactor).as(
               Right(RegistrationResult(baseToken, user, refreshTokenPlain))
             )
       yield result).flatTap {
