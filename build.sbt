@@ -7,6 +7,7 @@ val MunitCatsEffectVersion = "2.2.0"
 val CirisVersion = "3.15.0"
 val FlywayVersion = "13.0.0"
 val JwtScalaVersion = "11.0.4"
+val SwaggerUiVersion = "5.32.13"
 val PostgresVersion = "42.7.13"
 val JBcryptVersion = "0.4"
 
@@ -33,6 +34,7 @@ lazy val root = (project in file("."))
       "org.mindrot"     %  "jbcrypt"             % "0.4",
       "com.github.jwt-scala" %% "jwt-circe"      % JwtScalaVersion,
       "org.mindrot" % "jbcrypt" % JBcryptVersion,
+      "org.webjars"  % "swagger-ui"             % SwaggerUiVersion,
       "org.scalameta"   %% "munit"               % MunitVersion           % Test,
       "org.typelevel"   %% "munit-cats-effect"   % MunitCatsEffectVersion % Test,
       "ch.qos.logback"  %  "logback-classic"     % LogbackVersion         % Runtime,

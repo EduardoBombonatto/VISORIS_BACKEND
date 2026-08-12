@@ -75,6 +75,10 @@ and `AuthMiddleware.make(tokenService, userRepo)`.
 - **IAM/auth is implemented** (`iam/`): `AuthController`, `RegistrationService`,
   `UserRepository`, `RefreshTokenRepository`, plus `shared/auth` (`TokenService`,
   `AuthMiddleware`, `PasswordHasher`).
+- **API docs implemented** (`docs/`): `OpenApiSpec` builds an OpenAPI 3.0.1 document (circe) and
+  `DocsController` serves it at `/api/v1/docs/openapi.json`, a Swagger UI shell at `/api/v1/docs`,
+  and the `swagger-ui` webjar static assets at `/api/v1/docs/swagger-ui/*`. `DocsControllerSpec`
+  is pure (no DB).
 - **Tests exist for IAM**: `JwtServiceSpec` (pure), `UserRepositorySpec`,
   `RefreshTokenRepositorySpec`, `AuthControllerSpec` (E2E, needs Postgres).
 - **Database-first.** Schema in `V1__create_initial_schema.sql` with Snowflake IDs (`next_id()`),

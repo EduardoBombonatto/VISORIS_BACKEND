@@ -4,6 +4,7 @@ import cats.effect.{Async, Resource}
 import cats.syntax.all.*
 import com.comcast.ip4s.*
 import com.visoris.backend.config.Database
+import com.visoris.backend.docs.DocsController
 import com.visoris.backend.iam.controller.AuthController
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.iam.service.{AuthService, RegistrationService, WorkspaceService}
@@ -55,7 +56,8 @@ object BackendServer:
       workspaceService = WorkspaceService.make[F](tokenService, tokenBlacklist, transactor, userRepo, refreshTokenRepo)
 
       authRoutes = AuthController.routes[F](registrationService, authService, workspaceService)
-      httpApp = errorHandler(authRoutes.orNotFound)
+      docsRoutes = DocsController.routes[F]
+      httpApp = errorHandler((authRoutes <+> docsRoutes).orNotFound)
 
       _ <-
         EmberServerBuilder.default[F]
