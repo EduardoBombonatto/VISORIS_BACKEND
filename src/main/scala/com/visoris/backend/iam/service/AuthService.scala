@@ -24,6 +24,13 @@ final case class RefreshResult(
   newRefreshToken: String
 )
 
+final case class SessionResult(
+  user: User,
+  workspaces: List[Workspace],
+  newAccessToken: Option[String],
+  newRefreshToken: Option[String]
+)
+
 sealed trait LoginError
 object LoginError:
   case class Validation(errors: List[ValidationError]) extends LoginError
@@ -38,6 +45,11 @@ object RefreshError:
   case object Revoked extends RefreshError
   case class Internal(message: String) extends RefreshError
 
+sealed trait SessionError
+object SessionError:
+  case object Unauthenticated extends SessionError
+  case class Internal(message: String) extends SessionError
+
 trait AuthService[F[_]]:
   def login(
     request: LoginRequest,
@@ -45,6 +57,7 @@ trait AuthService[F[_]]:
     ipAddress: Option[String]
   ): F[Either[LoginError, LoginResult]]
   def refresh(cookieToken: String): F[Either[RefreshError, RefreshResult]]
+  def session(accessToken: Option[String], refreshToken: Option[String]): F[Either[SessionError, SessionResult]]
 
 object AuthService:
   def make[F[_]: Async: Logger](
@@ -150,3 +163,43 @@ object AuthService:
             Logger[F].error(s"Refresh internal error: $msg")
           case _ => Async[F].unit
         }
+
+    def session(accessToken: Option[String], refreshToken: Option[String]): F[Either[SessionError, SessionResult]] =
+      accessToken match
+        case Some(token) =>
+          tokenService.validateToken[F](token, "ACCESS").flatMap {
+            case Some(claims) =>
+              loadSession(claims.userId.toLong, None, None)
+            case None =>
+              refreshAndLoad(refreshToken)
+          }
+        case None =>
+          refreshAndLoad(refreshToken)
+
+    private def loadSession(
+      userId: Long,
+      newAccessToken: Option[String],
+      newRefreshToken: Option[String]
+    ): F[Either[SessionError, SessionResult]] =
+      userRepo.findById(userId).transact(transactor).flatMap {
+        case None => Async[F].pure(Left(SessionError.Unauthenticated))
+        case Some(user) =>
+          userRepo.findWorkspacesByUserId(user.id).transact(transactor).map { workspaces =>
+            Right(SessionResult(user, workspaces, newAccessToken, newRefreshToken))
+          }
+      }
+
+    private def refreshAndLoad(refreshToken: Option[String]): F[Either[SessionError, SessionResult]] =
+      refreshToken match
+        case None => Async[F].pure(Left(SessionError.Unauthenticated))
+        case Some(rt) =>
+          refresh(rt).flatMap {
+            case Left(RefreshError.Internal(msg)) => Async[F].pure(Left(SessionError.Internal(msg)))
+            case Left(_)                          => Async[F].pure(Left(SessionError.Unauthenticated))
+            case Right(result) =>
+              refreshTokenRepo.findByToken(result.newRefreshToken).transact(transactor).flatMap {
+                case None => Async[F].pure(Left(SessionError.Unauthenticated))
+                case Some(row) =>
+                  loadSession(row.userId, Some(result.accessToken), Some(result.newRefreshToken))
+              }
+          }

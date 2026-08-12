@@ -3,7 +3,7 @@ package com.visoris.backend.iam.controller
 import cats.effect.Async
 import cats.syntax.all.*
 import com.visoris.backend.iam.dto.*
-import com.visoris.backend.iam.service.{AuthService, LoginError, RefreshError, RegistrationError, RegistrationService, WorkspaceError, WorkspaceService}
+import com.visoris.backend.iam.service.{AuthService, LoginError, RefreshError, RegistrationError, RegistrationService, SessionError, WorkspaceError, WorkspaceService}
 import com.visoris.backend.shared.dto.ApiResponse
 import com.visoris.backend.shared.utils.CookieUtils
 import io.circe.syntax.*
@@ -125,6 +125,44 @@ object AuthController:
                   .map(_.addCookie(refreshCookie))
                   .map(_.withContentType(jsonContent))
             }
+
+      case req @ GET -> Root / "api" / "v1" / "auth" / "me" =>
+        val accessToken = req.cookies.find(_.name == "accessToken").map(_.content)
+        val refreshToken = req.cookies.find(_.name == "refreshToken").map(_.content)
+        authService.session(accessToken, refreshToken).flatMap {
+          case Left(SessionError.Unauthenticated) =>
+            Response[F](status = Status.Unauthorized)
+              .withEntity(ApiResponse.error("Não autenticado.", 401).asJson)
+              .withContentType(jsonContent)
+              .pure[F]
+          case Left(SessionError.Internal(msg)) =>
+            InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+          case Right(result) =>
+            val userData = UserData(
+              id = result.user.id.toString,
+              fullName = result.user.fullName,
+              professionalDocument = result.user.professionalDocument
+            )
+            val workspaceDataList = result.workspaces.map(ws =>
+              WorkspaceData(clinicId = ws.clinicId.toString, name = ws.name, role = ws.role)
+            )
+            val loginResponse = LoginResponse(user = userData, workspaces = workspaceDataList)
+            val apiSuccess = ApiResponse(
+              erro = false,
+              message = "Sessão restaurada com sucesso.",
+              data = Some(loginResponse),
+              httpcode = 200,
+              timestamp = java.time.Instant.now
+            )
+            val base = Ok(apiSuccess.asJson).map(_.withContentType(jsonContent))
+            val withAccess = result.newAccessToken.fold(base)(t =>
+              base.map(_.addCookie(CookieUtils.createAccessTokenCookie(t)))
+            )
+            val withRefresh = result.newRefreshToken.fold(withAccess)(t =>
+              withAccess.map(_.addCookie(CookieUtils.createRefreshCookie(t)))
+            )
+            withRefresh
+        }
 
       case req @ POST -> Root / "api" / "v1" / "auth" / "register" =>
         req.as[RegisterRequest].attempt.flatMap {

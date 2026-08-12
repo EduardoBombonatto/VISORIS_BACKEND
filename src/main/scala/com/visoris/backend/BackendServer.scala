@@ -14,11 +14,28 @@ import fs2.io.net.Network
 import io.circe.syntax.*
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.headers.`Content-Type`
+import org.http4s.server.middleware.{CORS, CORSPolicy}
 import org.http4s.{HttpApp, MediaType}
+import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BackendServer:
+
+  private def allowedOrigins: Set[CIString] =
+    sys.env
+      .getOrElse("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+      .split(',')
+      .iterator
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(CIString(_))
+      .toSet
+
+  private def corsConfig: CORSPolicy =
+    CORS.policy
+      .withAllowOriginHostCi(allowedOrigins)
+      .withAllowCredentials(true)
 
   private def errorHandler[F[_]: Async: Logger](app: HttpApp[F]): HttpApp[F] =
     HttpApp[F] { req =>
@@ -57,7 +74,7 @@ object BackendServer:
 
       authRoutes = AuthController.routes[F](registrationService, authService, workspaceService)
       docsRoutes = DocsController.routes[F]
-      httpApp = errorHandler((authRoutes <+> docsRoutes).orNotFound)
+      httpApp = corsConfig(errorHandler((authRoutes <+> docsRoutes).orNotFound))
 
       _ <-
         EmberServerBuilder.default[F]

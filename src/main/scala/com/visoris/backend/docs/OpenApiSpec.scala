@@ -157,6 +157,28 @@ object OpenApiSpec:
       "timestamp" -> str(timestampExample)
     )
 
+  private val meSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Sessão restaurada com sucesso."),
+      "data" -> obj(
+        "user" -> obj(
+          "id" -> str("8712345678901234567"),
+          "fullName" -> str("Dra. Maria Souza"),
+          "professionalDocument" -> str("CRM/SP 123456")
+        ),
+        "workspaces" -> Json.arr(
+          obj(
+            "clinicId" -> str("7612345678901234567"),
+            "name" -> str("Clínica Visoris Centro"),
+            "role" -> str("DOCTOR")
+          )
+        )
+      ),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
   private val refreshSuccessExample: Json =
     obj(
       "erro" -> bool(false),
@@ -410,6 +432,40 @@ object OpenApiSpec:
       )
     )
 
+  private val mePath: (String, Json) =
+    "/api/v1/auth/me" -> obj(
+      "get" -> obj(
+        "tags" -> Json.arr(str(authTag)),
+        "summary" -> str("Restaura a sessão do usuário autenticado."),
+        "description" -> str(
+          """Retorna o usuário autenticado e seus workspaces a partir dos cookies.
+            |Se o `accessToken` for válido, a sessão é retornada diretamente. Caso contrário,
+            |tenta rotacionar a sessão usando o `refreshToken` (emitindo novos cookies `accessToken`
+            |e `refreshToken`) antes de retornar os dados.""".stripMargin),
+        "operationId" -> str("authMe"),
+        "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr()), obj("refreshTokenCookie" -> Json.arr())),
+        "responses" -> obj(
+          "200" -> jsonResponseWithCookies(
+            "Sessão restaurada com sucesso. Retorna o usuário e seus workspaces. Quando a sessão é renovada, define os cookies `accessToken` e novo `refreshToken`.",
+            successEnvelope("LoginResponse"),
+            meSuccessExample,
+            refreshedSessionCookies
+          ),
+          "401" -> errorResponses(
+            """Não autenticado. Retornado quando não há `accessToken` válido e o `refreshToken`
+              |está ausente, expirado, desconhecido ou revogado.""".stripMargin,
+            List(
+              "nao-autenticado" -> genericErrorExample("Não autenticado.", 401)
+            )
+          ),
+          "500" -> errorResponse(
+            "Erro interno do servidor.",
+            genericErrorExample("Erro interno do servidor. Tente novamente.", 500)
+          )
+        )
+      )
+    )
+
   // Components ------------------------------------------------------------------
 
   private val securitySchemes: Json =
@@ -538,7 +594,7 @@ object OpenApiSpec:
       "tags" -> Json.arr(
         obj("name" -> str(authTag), "description" -> str("Autenticação, registro e seleção de workspace."))
       ),
-      "paths" -> obj(loginPath, refreshPath, registerPath, workspacePath),
+      "paths" -> obj(loginPath, refreshPath, registerPath, workspacePath, mePath),
       "components" -> obj(
         "securitySchemes" -> securitySchemes,
         "schemas" -> schemas
