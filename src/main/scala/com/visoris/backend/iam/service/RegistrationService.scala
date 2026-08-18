@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.syntax.all.*
 import com.visoris.backend.iam.domain.User
 import com.visoris.backend.iam.dto.{RegisterRequest, ValidationError}
-import com.visoris.backend.iam.repository.{RefreshTokenRepository, RepoError, UserRepository}
+import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.shared.auth.{CustomClaims, OpaqueTokenGenerator, PasswordHasher, TokenService}
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
@@ -133,19 +133,10 @@ object RegistrationService:
           createdAt = now
         )
 
-        createResult <- userRepo.create(user).transact(transactor)
-        result <- createResult match
-          case Left(RepoError.DuplicateEmail(_)) =>
-            Async[F].pure(Left(RegistrationError.DuplicateField("email", "Este e-mail já está cadastrado.")))
-          case Left(RepoError.DuplicateProfessionalDocument(_)) =>
-            Async[F].pure(Left(RegistrationError.DuplicateField("professionalDocument", "Documento profissional já cadastrado.")))
-          case Left(RepoError.Unexpected(msg)) =>
-            Logger[F].error(s"Registration internal error for email=$maskedEmail: $msg") *>
-              Async[F].pure(Left(RegistrationError.Internal("Erro interno do servidor. Tente novamente.")))
-          case Right(()) =>
-            refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress, None, None).transact(transactor).as(
-              Right(RegistrationResult(baseToken, user, refreshTokenPlain))
-            )
+        _ <- userRepo.create(user).transact(transactor)
+        result <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress, None, None).transact(transactor).as(
+          Right(RegistrationResult(baseToken, user, refreshTokenPlain))
+        )
       yield result).flatTap {
         case Left(RegistrationError.Internal(msg)) =>
           Logger[F].error(s"Registration internal error for email=$maskedEmail: $msg")

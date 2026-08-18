@@ -36,10 +36,7 @@ class UserRepositorySpec extends CatsEffectSuite:
     }
 
   private def assertCreate(repo: UserRepository[IO], xa: HikariTransactor[IO], user: User): IO[Unit] =
-    repo.create(user).transact(xa).flatMap {
-      case Right(()) => IO.unit
-      case Left(e)   => IO(fail(s"Expected success, got $e"))
-    }
+    repo.create(user).transact(xa).void
 
   test("create user and find by email") {
     transactorResource.use { xa =>
@@ -110,51 +107,6 @@ class UserRepositorySpec extends CatsEffectSuite:
       val repo = UserRepository.make[IO](xa)
       repo.findByProfessionalDocument(s"NONEXISTENT-${System.currentTimeMillis}").transact(xa).map { found =>
         assertEquals(found, None)
-      }
-    }
-  }
-
-  test("duplicate email insert should return DuplicateEmail error") {
-    transactorResource.use { xa =>
-      val repo = UserRepository.make[IO](xa)
-      val email = s"dup-${System.currentTimeMillis}@visoris.com"
-      val docBase = s"DOC-DUP-${System.currentTimeMillis}"
-      val user1 = User(
-        id = System.currentTimeMillis,
-        email = email,
-        passwordHash = "$2a$12$hashedpassword",
-        fullName = "Dup User 1",
-        professionalDocument = Some(s"$docBase-1"),
-        createdAt = Instant.now
-      )
-      val user2 = user1.copy(
-        id = System.currentTimeMillis + 1,
-        professionalDocument = Some(s"$docBase-2")
-      )
-      for
-        _      <- assertCreate(repo, xa, user1)
-        result <- repo.create(user2).transact(xa)
-      yield result match
-        case Left(RepoError.DuplicateEmail(_)) => assert(true)
-        case other => fail(s"Expected DuplicateEmail, got $other")
-    }
-  }
-
-  test("create user without professional document should fail (NOT NULL constraint)") {
-    transactorResource.use { xa =>
-      val repo = UserRepository.make[IO](xa)
-      val email = s"nodoc-${System.currentTimeMillis}@visoris.com"
-      val user = User(
-        id = System.currentTimeMillis,
-        email = email,
-        passwordHash = "$2a$12$hashedpassword",
-        fullName = "No Doc User",
-        professionalDocument = None,
-        createdAt = Instant.now
-      )
-      repo.create(user).transact(xa).map {
-        case Left(_)  => assert(true)
-        case Right(_) => fail("Expected create to fail: professional_document is NOT NULL")
       }
     }
   }

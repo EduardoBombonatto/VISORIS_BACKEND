@@ -37,7 +37,7 @@ object BackendServer:
       .withAllowOriginHostCi(allowedOrigins)
       .withAllowCredentials(true)
 
-  private def errorHandler[F[_]: Async: Logger](app: HttpApp[F]): HttpApp[F] =
+  private def errorHandler[F[_] : Async : Logger](app: HttpApp[F]): HttpApp[F] =
     HttpApp[F] { req =>
       app(req).handleErrorWith { err =>
         Logger[F].error(err)("Unhandled error processing request") *>
@@ -51,11 +51,11 @@ object BackendServer:
       }
     }
 
-  def run[F[_]: Async: Network]: F[Nothing] = {
+  def run[F[_] : Async : Network]: F[Nothing] = {
     given Logger[F] = Slf4jLogger.getLogger[F]
 
     val appResource = for {
-      dbUrl  <- Resource.pure[F, String](sys.env.getOrElse("DB_URL", "jdbc:postgresql://postgres:5432/visoris_db"))
+      dbUrl <- Resource.pure[F, String](sys.env.getOrElse("DB_URL", "jdbc:postgresql://postgres:5432/visoris_db"))
       dbUser <- Resource.pure[F, String](sys.env.getOrElse("DB_USER", "postgres"))
       dbPass <- Resource.pure[F, String](sys.env.getOrElse("DB_PASSWORD", "postgres"))
       jwtSecret <- Resource.pure[F, String](sys.env.getOrElse("JWT_SECRET", "changeme-dev-secret"))
