@@ -3,7 +3,7 @@ package com.visoris.backend.iam.controller
 import cats.effect.Async
 import cats.syntax.all.*
 import com.visoris.backend.iam.dto.*
-import com.visoris.backend.iam.service.{AuthService, LoginError, RefreshError, RegistrationError, RegistrationService, SessionError, WorkspaceError, WorkspaceService}
+import com.visoris.backend.iam.service.{AuthService, LoginError, LogoutError, RefreshError, RegistrationError, RegistrationService, SessionError, WorkspaceError, WorkspaceService}
 import com.visoris.backend.shared.dto.ApiResponse
 import com.visoris.backend.shared.utils.CookieUtils
 import io.circe.syntax.*
@@ -162,6 +162,30 @@ object AuthController:
               withAccess.map(_.addCookie(CookieUtils.createRefreshCookie(t)))
             )
             withRefresh
+        }
+
+      case req @ POST -> Root / "api" / "v1" / "auth" / "logout" =>
+        val refreshToken = req.cookies.find(_.name == "refreshToken").map(_.content)
+        authService.logout(refreshToken).flatMap {
+          case Right(_) =>
+            val apiSuccess: ApiResponse[Unit] = ApiResponse(
+              erro = false,
+              message = "Logout realizado com sucesso.",
+              data = None,
+              httpcode = 200,
+              timestamp = java.time.Instant.now
+            )
+            Ok(apiSuccess.asJson)
+              .map(_.addCookie(CookieUtils.clearAccessTokenCookie))
+              .map(_.addCookie(CookieUtils.clearRefreshTokenCookie))
+              .map(_.addCookie(CookieUtils.clearBaseTokenCookie))
+              .map(_.withContentType(jsonContent))
+          case Left(LogoutError.Internal(msg)) =>
+            InternalServerError(ApiResponse.error(msg, 500).asJson)
+              .map(_.addCookie(CookieUtils.clearAccessTokenCookie))
+              .map(_.addCookie(CookieUtils.clearRefreshTokenCookie))
+              .map(_.addCookie(CookieUtils.clearBaseTokenCookie))
+              .map(_.withContentType(jsonContent))
         }
 
       case req @ POST -> Root / "api" / "v1" / "auth" / "register" =>

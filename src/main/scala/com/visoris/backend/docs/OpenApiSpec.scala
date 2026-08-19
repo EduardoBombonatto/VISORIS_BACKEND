@@ -188,6 +188,15 @@ object OpenApiSpec:
       "timestamp" -> str(timestampExample)
     )
 
+  private val logoutSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Logout realizado com sucesso."),
+      "data" -> Json.Null,
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
   private val workspaceSuccessExample: Json =
     obj(
       "erro" -> bool(false),
@@ -219,6 +228,10 @@ object OpenApiSpec:
     "Define os cookies de sessão do workspace: `accessToken` (HttpOnly, Secure, SameSite=Strict, " +
       "Path=/api/v1, Max-Age=900), novo `refreshToken` (HttpOnly, Secure, SameSite=Strict, " +
       "Path=/api/v1/auth, Max-Age=604800) e limpa o `baseToken` (Max-Age=0)."
+
+  private val logoutClearingCookies: String =
+    "Limpa os cookies de sessão: `accessToken` (Path=/api/v1), `refreshToken` (Path=/api/v1/auth) e " +
+      "`baseToken` (Path=/api/v1/auth/workspace), todos com `Max-Age=0` para que o navegador os remova imediatamente."
 
   // Operations ----------------------------------------------------------------
 
@@ -466,10 +479,35 @@ object OpenApiSpec:
       )
     )
 
+  private val logoutPath: (String, Json) =
+    "/api/v1/auth/logout" -> obj(
+      "post" -> obj(
+        "tags" -> Json.arr(str(authTag)),
+        "summary" -> str("Encerra a sessão atual e limpa os cookies de sessão."),
+        "description" -> str(
+          """Revoga o `refreshToken` recebido via cookie e limpa os cookies `accessToken`, `refreshToken`
+            |e `baseToken` (Max-Age=0). Não possui corpo de requisição e é idempotente: cookies ausentes,
+            |desconhecidos ou já revogados ainda retornam 200.""".stripMargin),
+        "operationId" -> str("authLogout"),
+        "security" -> Json.arr(obj("refreshTokenCookie" -> Json.arr())),
+        "responses" -> obj(
+          "200" -> jsonResponseWithCookies(
+            "Sessão encerrada. Limpa os cookies `accessToken`, `refreshToken` e `baseToken` (Max-Age=0).",
+            envelope(obj("type" -> str("object"), "nullable" -> bool(true))),
+            logoutSuccessExample,
+            logoutClearingCookies
+          ),
+          "500" -> errorResponse(
+            "Erro interno do servidor. Os cookies de sessão ainda são limpos.",
+            genericErrorExample("Erro interno ao processar o logout.", 500)
+          )
+        )
+      )
+    )
+
   // Components ------------------------------------------------------------------
 
-  private val securitySchemes: Json =
-    obj(
+  private val securitySchemes: Json =    obj(
       "baseTokenCookie" -> obj(
         "type" -> str("apiKey"),
         "in" -> str("cookie"),
@@ -583,6 +621,7 @@ object OpenApiSpec:
             |1. `POST /api/v1/auth/register` ou `POST /api/v1/auth/login` → recebe os cookies `baseToken` e `refreshToken`.
             |2. `POST /api/v1/auth/workspace` com o `baseToken` + `refreshToken` → recebe o `accessToken` e um novo `refreshToken`.
             |3. `POST /api/v1/auth/refresh` com o `refreshToken` → renova `accessToken` e `refreshToken`.
+            |4. `POST /api/v1/auth/logout` com o `refreshToken` → revoga o token e limpa os cookies de sessão.
             |
             |Todos os tokens são transportados exclusivamente via cookies. Para testar no Swagger UI,
             |faça login/registro e copie os valores dos cookies de resposta para a seção Authorize.""".stripMargin
@@ -594,7 +633,7 @@ object OpenApiSpec:
       "tags" -> Json.arr(
         obj("name" -> str(authTag), "description" -> str("Autenticação, registro e seleção de workspace."))
       ),
-      "paths" -> obj(loginPath, refreshPath, registerPath, workspacePath, mePath),
+      "paths" -> obj(loginPath, refreshPath, registerPath, workspacePath, mePath, logoutPath),
       "components" -> obj(
         "securitySchemes" -> securitySchemes,
         "schemas" -> schemas

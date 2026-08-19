@@ -48,3 +48,25 @@ object CookieUtils:
       path = Some("/api/v1/auth/workspace"),
       maxAge = Some(0L)
     )
+
+  def clearAccessTokenCookie: ResponseCookie =
+    ResponseCookie(
+      name = "accessToken",
+      content = "",
+      httpOnly = true,
+      secure = secure,
+      sameSite = Some(SameSite.Strict),
+      path = Some("/api/v1"),
+      maxAge = Some(0L)
+    )
+
+  def clearRefreshTokenCookie: ResponseCookie =
+    ResponseCookie(
+      name = "refreshToken",
+      content = "",
+      httpOnly = true,
+      secure = secure,
+      sameSite = Some(SameSite.Strict),
+      path = Some("/api/v1/auth"),
+      maxAge = Some(0L)
+    )

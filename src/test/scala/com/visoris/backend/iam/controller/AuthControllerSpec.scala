@@ -333,3 +333,130 @@ class AuthControllerSpec extends CatsEffectSuite:
       }
     }
   }
+
+  private val logoutUri = baseUri / "api" / "v1" / "auth" / "logout"
+
+  private def setCookieValues(headers: org.http4s.Headers): List[String] =
+    headers.headers.filter(_.name == org.http4s.headers.`Set-Cookie`.name).map(_.value)
+
+  private def hasClearCookie(cookies: List[String], name: String, path: String): Boolean =
+    cookies.exists(c => c.contains(s"$name=") && c.contains(s"Path=$path") && c.contains("Max-Age=0"))
+
+  private def refreshTokenCookieFrom(headers: org.http4s.Headers): String =
+    headers.headers
+      .find(h => h.name == org.http4s.headers.`Set-Cookie`.name && h.value.contains("refreshToken="))
+      .map(_.value.split(";").headOption.filter(_.startsWith("refreshToken=")).map(_.stripPrefix("refreshToken=")).getOrElse(""))
+      .getOrElse(fail("No refreshToken cookie in response"))
+
+  private def registerAndLogin(client: org.http4s.client.Client[IO]): IO[String] =
+    val email = s"e2e-logout-${System.currentTimeMillis}@visoris.com"
+    val password = "Senha@123"
+    val doc = s"CRMV-LOGOUT-${System.currentTimeMillis}"
+    val registerBody = registerRequestJson("Dr. Logout", email, password, Some(doc))
+    for
+      _ <- makeRequest(client, registerBody)
+      loginJson = loginRequestJson(email, password)
+      loginReq = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "login")
+        .withEntity(loginJson)
+      loginResp <- client.run(loginReq).use { resp => resp.as[String].map(body => (resp.headers, body)) }
+      (loginHeaders, _) = loginResp
+    yield refreshTokenCookieFrom(loginHeaders)
+
+  test("logout: active session returns 200 with envelope and clears all three session cookies") {
+    serverResource.use { client =>
+      for
+        refreshCookieVal <- registerAndLogin(client)
+        logoutReq = Request[IO](method = Method.POST, uri = logoutUri)
+          .putHeaders(org.http4s.headers.Cookie(org.http4s.RequestCookie("refreshToken", refreshCookieVal)))
+        logoutResp <- client.run(logoutReq).use { resp => resp.as[String].map(body => (resp.status, resp.headers, body)) }
+        (status, headers, body) = logoutResp
+      yield
+        assertEquals(status, Status.Ok)
+        val json = parse(body).getOrElse(fail("Invalid JSON response"))
+        assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
+        assertEquals(json.hcursor.downField("httpcode").as[Int].getOrElse(0), 200)
+        assertEquals(json.hcursor.downField("data").focus, Some(Json.Null))
+        val sc = setCookieValues(headers)
+        assert(hasClearCookie(sc, "accessToken", "/api/v1"), s"accessToken clearing cookie missing in $sc")
+        assert(hasClearCookie(sc, "refreshToken", "/api/v1/auth"), s"refreshToken clearing cookie missing in $sc")
+        assert(hasClearCookie(sc, "baseToken", "/api/v1/auth/workspace"), s"baseToken clearing cookie missing in $sc")
+    }
+  }
+
+  test("logout: presented refresh token is revoked and rejected at refresh") {
+    serverResource.use { client =>
+      for
+        refreshCookieVal <- registerAndLogin(client)
+        logoutReq = Request[IO](method = Method.POST, uri = logoutUri)
+          .putHeaders(org.http4s.headers.Cookie(org.http4s.RequestCookie("refreshToken", refreshCookieVal)))
+        logoutResp <- client.run(logoutReq).use { resp => resp.as[String].map(body => (resp.status, body)) }
+        (logoutStatus, _) = logoutResp
+        _ <- IO(assertEquals(logoutStatus, Status.Ok))
+        refreshReq = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "refresh")
+          .putHeaders(org.http4s.headers.Cookie(org.http4s.RequestCookie("refreshToken", refreshCookieVal)))
+        refreshResp <- client.run(refreshReq).use { resp => resp.as[String].map(body => (resp.status, body)) }
+        (refreshStatus, _) = refreshResp
+      yield
+        assertEquals(refreshStatus, Status.Unauthorized)
+    }
+  }
+
+  test("logout: no cookies still returns 200 with clearing headers") {
+    serverResource.use { client =>
+      val req = Request[IO](method = Method.POST, uri = logoutUri)
+      client.run(req).use { resp => resp.as[String].map(body => (resp.status, resp.headers, body)) }.map { (status, headers, body) =>
+        assertEquals(status, Status.Ok)
+        val json = parse(body).getOrElse(fail("Invalid JSON response"))
+        assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
+        val sc = setCookieValues(headers)
+        assert(hasClearCookie(sc, "accessToken", "/api/v1"), s"accessToken clearing cookie missing in $sc")
+        assert(hasClearCookie(sc, "refreshToken", "/api/v1/auth"), s"refreshToken clearing cookie missing in $sc")
+        assert(hasClearCookie(sc, "baseToken", "/api/v1/auth/workspace"), s"baseToken clearing cookie missing in $sc")
+      }
+    }
+  }
+
+  test("logout: unknown or revoked refresh token still returns 200 (idempotent)") {
+    serverResource.use { client =>
+      val logoutReq = Request[IO](method = Method.POST, uri = logoutUri)
+        .putHeaders(org.http4s.headers.Cookie(org.http4s.RequestCookie("refreshToken", "unknown-token-value")))
+      for
+        first <- client.run(logoutReq).use { resp => resp.as[String].map(body => (resp.status, resp.headers, body)) }
+        (firstStatus, firstHeaders, _) = first
+        second <- client.run(logoutReq).use { resp => resp.as[String].map(body => (resp.status, resp.headers, body)) }
+        (secondStatus, secondHeaders, _) = second
+      yield
+        assertEquals(firstStatus, Status.Ok)
+        assertEquals(secondStatus, Status.Ok)
+        val sc1 = setCookieValues(firstHeaders)
+        val sc2 = setCookieValues(secondHeaders)
+        assert(hasClearCookie(sc1, "refreshToken", "/api/v1/auth"), s"refreshToken clearing cookie missing in $sc1")
+        assert(hasClearCookie(sc2, "refreshToken", "/api/v1/auth"), s"refreshToken clearing cookie missing in $sc2")
+    }
+  }
+
+  test("logout: unexpected JSON body is ignored and returns 200") {
+    serverResource.use { client =>
+      val req = Request[IO](method = Method.POST, uri = logoutUri)
+        .withEntity(Json.obj("foo" -> Json.fromString("bar")))
+      client.run(req).use { resp => resp.as[String].map(body => (resp.status, resp.headers, body)) }.map { (status, headers, body) =>
+        assertEquals(status, Status.Ok)
+        val json = parse(body).getOrElse(fail("Invalid JSON response"))
+        assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
+        assert(hasClearCookie(setCookieValues(headers), "refreshToken", "/api/v1/auth"), "refreshToken clearing cookie missing")
+      }
+    }
+  }
+
+  test("logout: malformed content is ignored and returns 200") {
+    serverResource.use { client =>
+      val req = Request[IO](method = Method.POST, uri = logoutUri)
+        .withEntity("{\"malformed\":")
+      client.run(req).use { resp => resp.as[String].map(body => (resp.status, resp.headers, body)) }.map { (status, headers, body) =>
+        assertEquals(status, Status.Ok)
+        val json = parse(body).getOrElse(fail("Invalid JSON response"))
+        assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
+        assert(hasClearCookie(setCookieValues(headers), "refreshToken", "/api/v1/auth"), "refreshToken clearing cookie missing")
+      }
+    }
+  }

@@ -50,6 +50,10 @@ object SessionError:
   case object Unauthenticated extends SessionError
   case class Internal(message: String) extends SessionError
 
+sealed trait LogoutError
+object LogoutError:
+  case class Internal(message: String) extends LogoutError
+
 trait AuthService[F[_]]:
   def login(
     request: LoginRequest,
@@ -58,6 +62,7 @@ trait AuthService[F[_]]:
   ): F[Either[LoginError, LoginResult]]
   def refresh(cookieToken: String): F[Either[RefreshError, RefreshResult]]
   def session(accessToken: Option[String], refreshToken: Option[String]): F[Either[SessionError, SessionResult]]
+  def logout(refreshToken: Option[String]): F[Either[LogoutError, Unit]]
 
 object AuthService:
   def make[F[_]: Async: Logger](
@@ -175,6 +180,22 @@ object AuthService:
           }
         case None =>
           refreshAndLoad(refreshToken)
+
+    def logout(refreshToken: Option[String]): F[Either[LogoutError, Unit]] =
+      refreshToken match
+        case None =>
+          Logger[F].info("Logout sem refresh token — nada a revogar") *>
+            Async[F].pure(Right(()))
+        case Some(token) =>
+          Logger[F].info("Logout attempt") *>
+            refreshTokenRepo.revokeByToken(token).transact(transactor).attempt.flatMap {
+              case Right(_) =>
+                Logger[F].info("Logout successful — refresh token revoked") *>
+                  Async[F].pure(Right(()))
+              case Left(err) =>
+                Logger[F].error(s"Logout internal error: ${err.getMessage}") *>
+                  Async[F].pure(Left(LogoutError.Internal("Erro interno ao processar o logout.")))
+            }
 
     private def loadSession(
       userId: Long,
