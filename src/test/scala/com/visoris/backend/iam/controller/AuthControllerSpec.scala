@@ -236,7 +236,7 @@ class AuthControllerSpec extends CatsEffectSuite:
     }
   }
 
-  test("refresh: returns expiresIn and new Set-Cookie (accessToken + refreshToken), old token revoked") {
+  test("refresh: returns expiresIn and new Set-Cookie (accessToken + refreshToken); old token reuse within grace window rotates again") {
     serverResource.use { client =>
       val email = s"e2e-refresh-${System.currentTimeMillis}@visoris.com"
       val password = "Senha@123"
@@ -283,11 +283,24 @@ class AuthControllerSpec extends CatsEffectSuite:
         replayReq: Request[IO] = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "refresh")
           .putHeaders(org.http4s.headers.Cookie(org.http4s.RequestCookie("refreshToken", oldCookieValue)))
         replayResp <- client.run(replayReq).use { resp =>
-          resp.as[String].map(body => (resp.status, body))
+          resp.as[String].map(body => (resp.status, resp.headers, body))
         }
-        (replayStatus, _) = replayResp
+        (replayStatus, replayHeaders, replayBody) = replayResp
       yield
-        assertEquals(replayStatus, Status.Unauthorized)
+        assertEquals(replayStatus, Status.Ok)
+        val replayJson = parse(replayBody).getOrElse(fail("Invalid JSON response"))
+        assertEquals(replayJson.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
+        assertEquals(replayJson.hcursor.downField("data").downField("expiresIn").as[Int].getOrElse(0), 900)
+        val replayCookies = replayHeaders.headers
+          .filter(_.name == org.http4s.headers.`Set-Cookie`.name)
+          .map(_.value)
+        assert(replayCookies.exists(_.contains("accessToken=")), "Expected accessToken cookie on grace-window replay")
+        assert(replayCookies.exists(_.contains("refreshToken=")), "Expected refreshToken cookie on grace-window replay")
+        val replayCookieValue = replayHeaders.headers
+          .find(h => h.name == org.http4s.headers.`Set-Cookie`.name && h.value.contains("refreshToken="))
+          .getOrElse(fail("No refreshToken cookie on replay"))
+          .value.split(";").headOption.filter(_.startsWith("refreshToken=")).map(_.stripPrefix("refreshToken=")).getOrElse("")
+        assert(replayCookieValue != newCookieValue, "Grace-window replay should rotate yet another refresh token")
     }
   }
 

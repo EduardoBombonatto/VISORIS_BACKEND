@@ -11,7 +11,7 @@ import java.time.Instant
 trait RefreshTokenRepository[F[_]]:
   def create(userId: Long, token: String, expiresAt: Instant, deviceInfo: Option[String], ipAddress: Option[String], clinicId: Option[Long], role: Option[String]): ConnectionIO[Unit]
   def findByToken(token: String): ConnectionIO[Option[RefreshToken]]
-  def revokeByToken(token: String): ConnectionIO[Int]
+  def revokeByToken(token: String, reason: String): ConnectionIO[Int]
   def revokeAllByUserId(userId: Long): ConnectionIO[Int]
 
 object RefreshTokenRepository:
@@ -24,16 +24,17 @@ object RefreshTokenRepository:
 
     def findByToken(token: String): ConnectionIO[Option[RefreshToken]] =
       sql"""
-        SELECT id, user_id, token, expires_at, is_revoked, device_info, ip_address, clinic_id, role, created_at
+        SELECT id, user_id, token, expires_at, is_revoked, revoked_at, revoked_reason, device_info, ip_address, clinic_id, role, created_at
         FROM refresh_tokens WHERE token = $token
       """.query[RefreshToken].option
 
-    def revokeByToken(token: String): ConnectionIO[Int] =
+    def revokeByToken(token: String, reason: String): ConnectionIO[Int] =
       sql"""
-        UPDATE refresh_tokens SET is_revoked = true WHERE token = $token
+        UPDATE refresh_tokens SET is_revoked = true, revoked_at = now(), revoked_reason = $reason WHERE token = $token
       """.update.run
 
     def revokeAllByUserId(userId: Long): ConnectionIO[Int] =
       sql"""
-        UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $userId AND is_revoked = false
+        UPDATE refresh_tokens SET is_revoked = true, revoked_at = now(), revoked_reason = 'THEFT'
+        WHERE user_id = $userId AND is_revoked = false
       """.update.run

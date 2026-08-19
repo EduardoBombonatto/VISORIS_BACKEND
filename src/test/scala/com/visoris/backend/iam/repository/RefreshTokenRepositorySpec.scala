@@ -95,7 +95,7 @@ class RefreshTokenRepositorySpec extends CatsEffectSuite:
     }
   }
 
-  test("revokeByToken marks token as revoked") {
+  test("revokeByToken marks token as revoked with reason and timestamp") {
     transactorResource.use { xa =>
       val repo = RefreshTokenRepository.make[IO](xa)
       for
@@ -105,16 +105,18 @@ class RefreshTokenRepositorySpec extends CatsEffectSuite:
         _ <- repo.create(userId, token, expiresAt, Some("agent"), Some("1.2.3.4"), None, None).transact(xa)
         found1 <- repo.findByToken(token).transact(xa)
         _ = assert(found1.isDefined && !found1.get.isRevoked)
-        rows <- repo.revokeByToken(token).transact(xa)
+        rows <- repo.revokeByToken(token, "ROTATION").transact(xa)
         found2 <- repo.findByToken(token).transact(xa)
       yield
         assertEquals(rows, 1)
         assert(found2.isDefined)
         assert(found2.get.isRevoked)
+        assert(found2.get.revokedAt.isDefined)
+        assertEquals(found2.get.revokedReason, Some("ROTATION"))
     }
   }
 
-  test("revokeAllByUserId revokes all active tokens for a user") {
+  test("revokeAllByUserId revokes all active tokens for a user marking them as theft") {
     transactorResource.use { xa =>
       val repo = RefreshTokenRepository.make[IO](xa)
       for
@@ -131,6 +133,9 @@ class RefreshTokenRepositorySpec extends CatsEffectSuite:
         assertEquals(rows, 2)
         assert(found1.get.isRevoked)
         assert(found2.get.isRevoked)
+        assertEquals(found1.get.revokedReason, Some("THEFT"))
+        assertEquals(found2.get.revokedReason, Some("THEFT"))
+        assert(found1.get.revokedAt.isDefined)
     }
   }
 

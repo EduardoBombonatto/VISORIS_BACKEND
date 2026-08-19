@@ -2,7 +2,7 @@ package com.visoris.backend.iam.service
 
 import cats.effect.Async
 import cats.syntax.all.*
-import com.visoris.backend.iam.domain.{User, Workspace}
+import com.visoris.backend.iam.domain.{RefreshToken, User, Workspace}
 import com.visoris.backend.iam.dto.{LoginRequest, ValidationError}
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.shared.auth.{CustomClaims, OpaqueTokenGenerator, PasswordHasher, TokenService}
@@ -129,45 +129,57 @@ object AuthService:
             case _ => Async[F].unit
           }
 
+    private val ReuseGraceSeconds = 60
+
+    private def reuseWithinGrace(rt: RefreshToken): Boolean =
+      rt.revokedReason.contains("ROTATION") &&
+        rt.revokedAt.exists(_.isAfter(Instant.now.minusSeconds(ReuseGraceSeconds)))
+
     def refresh(cookieToken: String): F[Either[RefreshError, RefreshResult]] =
       Logger[F].info("Refresh attempt") *>
         refreshTokenRepo.findByToken(cookieToken).transact(transactor).flatMap {
           case None =>
             Logger[F].info("Refresh rejected — token unknown") *>
               Async[F].pure(Left(RefreshError.Unknown))
-          case Some(rt) if rt.isRevoked =>
+          case Some(rt) if rt.isRevoked && !reuseWithinGrace(rt) =>
             Logger[F].warn(s"Refresh rejected — token already revoked (possible theft); revoking all sessions for user=${rt.userId}") *>
               refreshTokenRepo.revokeAllByUserId(rt.userId).transact(transactor) *>
               Async[F].pure(Left(RefreshError.Revoked))
+          case Some(rt) if rt.isRevoked =>
+            Logger[F].warn(s"Refresh — revoked token reused within grace window (possible concurrent rotation); rotating again for user=${rt.userId}") *>
+              rotate(rt)
           case Some(rt) if rt.expiresAt.isBefore(Instant.now) =>
             Logger[F].info("Refresh rejected — token expired") *>
               Async[F].pure(Left(RefreshError.Expired))
           case Some(rt) =>
-            for
-              user <- userRepo.findById(rt.userId).transact(transactor)
-              now <- Async[F].delay(Instant.now)
-              accessToken <- tokenService.createAccessToken[F](
-                CustomClaims(
-                  userId = rt.userId.toString,
-                  email = user.fold("")(_.email),
-                  roles = List(rt.role.getOrElse("DOCTOR")),
-                  clinicId = rt.clinicId.map(_.toString),
-                  tokenType = "ACCESS"
-                )
-              )
-              newRefreshToken <- OpaqueTokenGenerator.generate[F]
-              newExpires = now.plusSeconds(7 * 24 * 60 * 60)
-              _ <- (for
-                _ <- refreshTokenRepo.revokeByToken(cookieToken)
-                _ <- refreshTokenRepo.create(rt.userId, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress, rt.clinicId, rt.role)
-              yield ()).transact(transactor)
-              _ <- Logger[F].info(s"Refresh successful for user=${rt.userId}")
-            yield Right(RefreshResult(accessToken, 900, newRefreshToken))
+            rotate(rt)
         }.flatTap {
           case Left(RefreshError.Internal(msg)) =>
             Logger[F].error(s"Refresh internal error: $msg")
           case _ => Async[F].unit
         }
+
+    private def rotate(rt: RefreshToken): F[Either[RefreshError, RefreshResult]] =
+      for
+        user <- userRepo.findById(rt.userId).transact(transactor)
+        now <- Async[F].delay(Instant.now)
+        accessToken <- tokenService.createAccessToken[F](
+          CustomClaims(
+            userId = rt.userId.toString,
+            email = user.fold("")(_.email),
+            roles = List(rt.role.getOrElse("DOCTOR")),
+            clinicId = rt.clinicId.map(_.toString),
+            tokenType = "ACCESS"
+          )
+        )
+        newRefreshToken <- OpaqueTokenGenerator.generate[F]
+        newExpires = now.plusSeconds(7 * 24 * 60 * 60)
+        _ <- (for
+          _ <- refreshTokenRepo.revokeByToken(rt.token, "ROTATION")
+          _ <- refreshTokenRepo.create(rt.userId, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress, rt.clinicId, rt.role)
+        yield ()).transact(transactor)
+        _ <- Logger[F].info(s"Refresh successful for user=${rt.userId}")
+      yield Right(RefreshResult(accessToken, 900, newRefreshToken))
 
     def session(accessToken: Option[String], refreshToken: Option[String]): F[Either[SessionError, SessionResult]] =
       accessToken match
@@ -188,7 +200,7 @@ object AuthService:
             Async[F].pure(Right(()))
         case Some(token) =>
           Logger[F].info("Logout attempt") *>
-            refreshTokenRepo.revokeByToken(token).transact(transactor).attempt.flatMap {
+            refreshTokenRepo.revokeByToken(token, "LOGOUT").transact(transactor).attempt.flatMap {
               case Right(_) =>
                 Logger[F].info("Logout successful — refresh token revoked") *>
                   Async[F].pure(Right(()))

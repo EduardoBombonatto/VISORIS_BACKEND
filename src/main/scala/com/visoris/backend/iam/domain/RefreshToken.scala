@@ -8,6 +8,8 @@ final case class RefreshToken(
   token: String,
   expiresAt: Instant,
   isRevoked: Boolean,
+  revokedAt: Option[Instant],
+  revokedReason: Option[String],
   deviceInfo: Option[String],
   ipAddress: Option[String],
   clinicId: Option[Long],
