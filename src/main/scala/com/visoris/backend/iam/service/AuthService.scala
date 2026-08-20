@@ -2,7 +2,7 @@ package com.visoris.backend.iam.service
 
 import cats.effect.Async
 import cats.syntax.all.*
-import com.visoris.backend.iam.domain.{RefreshToken, User, Workspace}
+import com.visoris.backend.iam.domain.{RefreshToken, User}
 import com.visoris.backend.iam.dto.{LoginRequest, ValidationError}
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.shared.auth.{CustomClaims, OpaqueTokenGenerator, PasswordHasher, TokenService}
@@ -12,9 +12,8 @@ import org.typelevel.log4cats.Logger
 import java.time.Instant
 
 final case class LoginResult(
-  baseToken: String,
+  accessToken: String,
   user: User,
-  workspaces: List[Workspace],
   refreshToken: String
 )
 
@@ -26,7 +25,6 @@ final case class RefreshResult(
 
 final case class SessionResult(
   user: User,
-  workspaces: List[Workspace],
   newAccessToken: Option[String],
   newRefreshToken: Option[String]
 )
@@ -88,6 +86,7 @@ object AuthService:
     ): F[Either[LoginError, LoginResult]] =
       val normalizedEmail = request.email.toLowerCase
       val masked = maskEmail(normalizedEmail)
+      val refreshExpiresTime = 7 * 24 * 60 * 60
 
       val validationErrors = request.validate
       if validationErrors.nonEmpty then
@@ -106,22 +105,21 @@ object AuthService:
                     Async[F].pure(Left(LoginError.InvalidCredentials))
                 case true =>
                   for
-                    workspaces <- userRepo.findWorkspacesByUserId(user.id).transact(transactor)
                     now <- Async[F].delay(Instant.now)
-                    baseToken <- tokenService.createBaseToken[F](
+                    accessToken <- tokenService.createAccessToken[F](
                       CustomClaims(
                         userId = user.id.toString,
                         email = user.email,
                         roles = List("DOCTOR"),
                         clinicId = None,
-                        tokenType = "BASE"
+                        tokenType = "ACCESS"
                       )
                     )
                     refreshTokenPlain <- OpaqueTokenGenerator.generate[F]
-                    refreshExpires = now.plusSeconds(7 * 24 * 60 * 60)
+                    refreshExpires = now.plusSeconds(refreshExpiresTime)
                     _ <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress, None, None).transact(transactor)
                     _ <- Logger[F].info(s"Login successful for email=$masked")
-                  yield Right(LoginResult(baseToken, user, workspaces, refreshTokenPlain))
+                  yield Right(LoginResult(accessToken, user, refreshTokenPlain))
               }
           }.flatTap {
             case Left(LoginError.Internal(msg)) =>
@@ -167,8 +165,8 @@ object AuthService:
           CustomClaims(
             userId = rt.userId.toString,
             email = user.fold("")(_.email),
-            roles = List(rt.role.getOrElse("DOCTOR")),
-            clinicId = rt.clinicId.map(_.toString),
+            roles = List("DOCTOR"),
+            clinicId = None,
             tokenType = "ACCESS"
           )
         )
@@ -214,12 +212,10 @@ object AuthService:
       newAccessToken: Option[String],
       newRefreshToken: Option[String]
     ): F[Either[SessionError, SessionResult]] =
-      userRepo.findById(userId).transact(transactor).flatMap {
-        case None => Async[F].pure(Left(SessionError.Unauthenticated))
+      userRepo.findById(userId).transact(transactor).map {
+        case None => Left(SessionError.Unauthenticated)
         case Some(user) =>
-          userRepo.findWorkspacesByUserId(user.id).transact(transactor).map { workspaces =>
-            Right(SessionResult(user, workspaces, newAccessToken, newRefreshToken))
-          }
+          Right(SessionResult(user, newAccessToken, newRefreshToken))
       }
 
     private def refreshAndLoad(refreshToken: Option[String]): F[Either[SessionError, SessionResult]] =

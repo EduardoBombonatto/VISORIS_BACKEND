@@ -35,7 +35,7 @@ class DocsControllerSpec extends CatsEffectSuite:
       val paths = json.hcursor.downField("paths").keys.fold(Set.empty[String])(_.toSet)
       assertEquals(
         paths,
-        Set("/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/register", "/api/v1/auth/workspace", "/api/v1/auth/me", "/api/v1/auth/logout")
+        Set("/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/register", "/api/v1/auth/me", "/api/v1/auth/logout")
       )
   }
 
@@ -75,22 +75,7 @@ class DocsControllerSpec extends CatsEffectSuite:
       assertEquals(responseCodesFor(json, "/api/v1/auth/register"), Set("201", "400", "409", "500"))
   }
 
-  test("workspace documents happy path (200) and edge cases (400, 401, 403, 500)") {
-    val req = Request[IO](Method.GET, uri"/api/v1/docs/openapi.json")
-    for
-      resp <- routes.run(req)
-      body <- resp.as[String]
-    yield
-      val json = parse(body).getOrElse(fail("OpenAPI spec is not valid JSON"))
-      assertEquals(responseCodesFor(json, "/api/v1/auth/workspace"), Set("200", "400", "401", "403", "500"))
-      val security = json.hcursor
-        .downField("paths").downField("/api/v1/auth/workspace").downField("post").downField("security")
-        .as[Json].toOption.flatMap(_.asArray)
-        .getOrElse(Nil)
-      assert(security.nonEmpty, "workspace must declare cookie security")
-  }
-
-  test("defines the three cookie security schemes and all schemas") {
+  test("defines the two cookie security schemes and all schemas") {
     val req = Request[IO](Method.GET, uri"/api/v1/docs/openapi.json")
     for
       resp <- routes.run(req)
@@ -99,15 +84,15 @@ class DocsControllerSpec extends CatsEffectSuite:
       val json = parse(body).getOrElse(fail("OpenAPI spec is not valid JSON"))
       assertEquals(
         keysAt(json, "components", "securitySchemes"),
-        Set("baseTokenCookie", "refreshTokenCookie", "accessTokenCookie")
+        Set("refreshTokenCookie", "accessTokenCookie")
       )
       val schemas = keysAt(json, "components", "schemas")
       assertEquals(
         schemas,
         Set(
-          "LoginRequest", "RegisterRequest", "WorkspaceRequest",
-          "UserData", "WorkspaceData", "LoginResponse", "RegisterResponse",
-          "ActiveWorkspace", "WorkspaceResponse", "RefreshResponse", "ValidationError"
+          "LoginRequest", "RegisterRequest",
+          "UserData", "LoginResponse", "RegisterResponse",
+          "RefreshResponse", "ValidationError"
         )
       )
   }

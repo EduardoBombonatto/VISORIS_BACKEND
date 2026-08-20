@@ -17,14 +17,12 @@ final case class CustomClaims(
 )
 
 trait TokenService:
-  def createBaseToken[F[_]: Sync](claims: CustomClaims): F[String]
   def createAccessToken[F[_]: Sync](claims: CustomClaims): F[String]
   def validateToken[F[_]: Sync](token: String, expectedType: String): F[Option[CustomClaims]]
 
 object TokenService:
   private val algorithm = JwtAlgorithm.HS256
   private val issuer = "api"
-  private val baseTokenTtlSeconds = 300L
   private val accessTokenTtlSeconds = 900L
 
   def make(secretKey: String): TokenService = new TokenService:
@@ -40,9 +38,6 @@ object TokenService:
         secretKey,
         algorithm
       )
-
-    def createBaseToken[F[_]: Sync](claims: CustomClaims): F[String] =
-      Sync[F].delay(encode(claims.copy(clinicId = None, tokenType = "BASE"), baseTokenTtlSeconds))
 
     def createAccessToken[F[_]: Sync](claims: CustomClaims): F[String] =
       Sync[F].delay(encode(claims.copy(tokenType = "ACCESS"), accessTokenTtlSeconds))

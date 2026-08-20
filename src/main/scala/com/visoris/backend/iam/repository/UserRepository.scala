@@ -1,7 +1,7 @@
 package com.visoris.backend.iam.repository
 
 import cats.syntax.all.*
-import com.visoris.backend.iam.domain.{User, Workspace}
+import com.visoris.backend.iam.domain.User
 import doobie.*
 import doobie.implicits.*
 import doobie.implicits.javatimedrivernative.given
@@ -12,8 +12,6 @@ trait UserRepository[F[_]]:
   def findById(id: Long): ConnectionIO[Option[User]]
   def findByEmail(email: String): ConnectionIO[Option[User]]
   def findByProfessionalDocument(doc: String): ConnectionIO[Option[User]]
-  def findWorkspacesByUserId(userId: Long): ConnectionIO[List[Workspace]]
-  def findMembershipByUserIdAndClinicId(userId: Long, clinicId: Long): ConnectionIO[Option[Workspace]]
 
 object UserRepository:
   def make[F[_]](transactor: Transactor[F]): UserRepository[F] = new UserRepository[F]:
@@ -40,20 +38,3 @@ object UserRepository:
         SELECT id, email, password_hash, full_name, professional_document, created_at
         FROM users WHERE professional_document = ${doc}
       """.query[User].option
-
-    def findWorkspacesByUserId(userId: Long): ConnectionIO[List[Workspace]] =
-      sql"""
-        SELECT c.id, c.name, dc.role
-        FROM doctor_clinics dc
-        JOIN clinics c ON c.id = dc.clinic_id
-        WHERE dc.user_id = $userId
-        ORDER BY c.name
-      """.query[Workspace].to[List]
-
-    def findMembershipByUserIdAndClinicId(userId: Long, clinicId: Long): ConnectionIO[Option[Workspace]] =
-      sql"""
-        SELECT c.id, c.name, dc.role
-        FROM doctor_clinics dc
-        JOIN clinics c ON c.id = dc.clinic_id
-        WHERE dc.user_id = $userId AND dc.clinic_id = $clinicId
-      """.query[Workspace].option

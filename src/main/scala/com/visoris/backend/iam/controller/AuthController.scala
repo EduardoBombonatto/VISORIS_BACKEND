@@ -3,7 +3,7 @@ package com.visoris.backend.iam.controller
 import cats.effect.Async
 import cats.syntax.all.*
 import com.visoris.backend.iam.dto.*
-import com.visoris.backend.iam.service.{AuthService, LoginError, LogoutError, RefreshError, RegistrationError, RegistrationService, SessionError, WorkspaceError, WorkspaceService}
+import com.visoris.backend.iam.service.{AuthService, LoginError, LogoutError, RefreshError, RegistrationError, RegistrationService, SessionError}
 import com.visoris.backend.shared.dto.ApiResponse
 import com.visoris.backend.shared.utils.CookieUtils
 import io.circe.syntax.*
@@ -25,7 +25,7 @@ object AuthController:
 
   private def jsonContent: `Content-Type` = `Content-Type`(MediaType.application.json)
 
-  def routes[F[_]: Async](registrationService: RegistrationService[F], authService: AuthService[F], workspaceService: WorkspaceService[F]): HttpRoutes[F] =
+  def routes[F[_]: Async](registrationService: RegistrationService[F], authService: AuthService[F]): HttpRoutes[F] =
     val dsl = new Http4sDsl[F] {}
     import dsl.*
 
@@ -51,24 +51,18 @@ object AuthController:
                   fullName = result.user.fullName,
                   professionalDocument = result.user.professionalDocument
                 )
-                val workspaceDataList = result.workspaces.map(ws =>
-                  WorkspaceData(clinicId = ws.clinicId.toString, name = ws.name, role = ws.role)
-                )
-                val loginResponse = LoginResponse(
-                  user = userData,
-                  workspaces = workspaceDataList
-                )
+                val loginResponse = LoginResponse(user = userData)
                 val apiSuccess = ApiResponse(
                   erro = false,
-                  message = "Autenticado. Selecione o Workspace.",
+                  message = "Autenticado com sucesso.",
                   data = Some(loginResponse),
                   httpcode = 200,
                   timestamp = java.time.Instant.now
                 )
-                val baseTokenCookie = CookieUtils.createBaseTokenCookie(result.baseToken)
+                val accessCookie = CookieUtils.createAccessTokenCookie(result.accessToken)
                 val refreshCookie = CookieUtils.createRefreshCookie(result.refreshToken)
                 Ok(apiSuccess.asJson)
-                  .map(_.addCookie(baseTokenCookie))
+                  .map(_.addCookie(accessCookie))
                   .map(_.addCookie(refreshCookie))
                   .map(_.withContentType(jsonContent))
             }
@@ -143,10 +137,7 @@ object AuthController:
               fullName = result.user.fullName,
               professionalDocument = result.user.professionalDocument
             )
-            val workspaceDataList = result.workspaces.map(ws =>
-              WorkspaceData(clinicId = ws.clinicId.toString, name = ws.name, role = ws.role)
-            )
-            val loginResponse = LoginResponse(user = userData, workspaces = workspaceDataList)
+            val loginResponse = LoginResponse(user = userData)
             val apiSuccess = ApiResponse(
               erro = false,
               message = "Sessão restaurada com sucesso.",
@@ -178,13 +169,11 @@ object AuthController:
             Ok(apiSuccess.asJson)
               .map(_.addCookie(CookieUtils.clearAccessTokenCookie))
               .map(_.addCookie(CookieUtils.clearRefreshTokenCookie))
-              .map(_.addCookie(CookieUtils.clearBaseTokenCookie))
               .map(_.withContentType(jsonContent))
           case Left(LogoutError.Internal(msg)) =>
             InternalServerError(ApiResponse.error(msg, 500).asJson)
               .map(_.addCookie(CookieUtils.clearAccessTokenCookie))
               .map(_.addCookie(CookieUtils.clearRefreshTokenCookie))
-              .map(_.addCookie(CookieUtils.clearBaseTokenCookie))
               .map(_.withContentType(jsonContent))
         }
 
@@ -225,10 +214,7 @@ object AuthController:
                   fullName = result.user.fullName,
                   professionalDocument = result.user.professionalDocument
                 )
-                val registerResponse = RegisterResponse(
-                  user = userData,
-                  workspaces = List.empty
-                )
+                val registerResponse = RegisterResponse(user = userData)
                 val apiSuccess = ApiResponse(
                   erro = false,
                   message = "Conta criada com sucesso.",
@@ -236,90 +222,12 @@ object AuthController:
                   httpcode = 201,
                   timestamp = java.time.Instant.now
                 )
-                val baseTokenCookie = CookieUtils.createBaseTokenCookie(result.baseToken)
+                val accessCookie = CookieUtils.createAccessTokenCookie(result.accessToken)
                 val refreshCookie = CookieUtils.createRefreshCookie(result.refreshToken)
                 Created(apiSuccess.asJson)
-                  .map(_.addCookie(baseTokenCookie))
+                  .map(_.addCookie(accessCookie))
                   .map(_.addCookie(refreshCookie))
                   .map(_.withContentType(jsonContent))
             }
         }
-
-      case req @ POST -> Root / "api" / "v1" / "auth" / "workspace" =>
-        val baseTokenCookie = req.cookies.find(_.name == "baseToken").map(_.content)
-        baseTokenCookie match
-          case None =>
-            val resp = Response[F](status = Status.Unauthorized)
-              .withEntity(ApiResponse.error("Base Token inválido ou expirado.", 401).asJson)
-              .withContentType(jsonContent)
-            resp.pure[F]
-          case Some(baseToken) =>
-            req.as[WorkspaceRequest].attempt.flatMap {
-              case Left(_) =>
-                BadRequest(
-                  ApiResponse.error("Requisição inválida. Verifique o formato dos dados.", 400).asJson
-                ).map(_.withContentType(jsonContent))
-              case Right(workspaceReq) =>
-                val validationErrors = workspaceReq.validate
-                if validationErrors.nonEmpty then
-                  BadRequest(errorResponse(validationErrors).asJson)
-                    .map(_.withContentType(jsonContent))
-                else
-                  val clinicId = workspaceReq.clinicId.toLong
-                  val refreshCookie = req.cookies.find(_.name == "refreshToken").map(_.content)
-                  workspaceService.selectWorkspace(baseToken, clinicId, refreshCookie).flatMap {
-                    case Left(WorkspaceError.Validation(errors)) =>
-                      BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
-                    case Left(WorkspaceError.InvalidBaseToken) =>
-                      val resp = Response[F](status = Status.Unauthorized)
-                        .withEntity(ApiResponse.error("Base Token inválido ou expirado.", 401).asJson)
-                        .withContentType(jsonContent)
-                      resp.pure[F]
-                    case Left(WorkspaceError.MissingRefreshToken) =>
-                      val resp = Response[F](status = Status.Unauthorized)
-                        .withEntity(ApiResponse.error("Refresh token inválido.", 401).asJson)
-                        .withContentType(jsonContent)
-                      resp.pure[F]
-                    case Left(WorkspaceError.UnauthorizedClinic) =>
-                      val resp = Response[F](status = Status.Forbidden)
-                        .withEntity(ApiResponse.error("Acesso negado ao workspace selecionado.", 403).asJson)
-                        .withContentType(jsonContent)
-                      resp.pure[F]
-                    case Left(WorkspaceError.RevokedRefreshToken) =>
-                      val resp = Response[F](status = Status.Unauthorized)
-                        .withEntity(ApiResponse.error("Refresh token revogado.", 401).asJson)
-                        .withContentType(jsonContent)
-                      resp.pure[F]
-                    case Left(WorkspaceError.ExpiredRefreshToken) =>
-                      val resp = Response[F](status = Status.Unauthorized)
-                        .withEntity(ApiResponse.error("Sessão expirada.", 401).asJson)
-                        .withContentType(jsonContent)
-                      resp.pure[F]
-                    case Left(WorkspaceError.BaseTokenReused) =>
-                      val resp = Response[F](status = Status.Unauthorized)
-                        .withEntity(ApiResponse.error("Base Token inválido ou expirado.", 401).asJson)
-                        .withContentType(jsonContent)
-                      resp.pure[F]
-                    case Left(WorkspaceError.Internal(msg)) =>
-                      InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
-                    case Right(result) =>
-                      val apiSuccess = ApiResponse(
-                        erro = false,
-                        message = "Sessão de Workspace iniciada.",
-                        data = Some(WorkspaceResponse(
-                          activeWorkspace = result.activeWorkspace
-                        )),
-                        httpcode = 200,
-                        timestamp = java.time.Instant.now
-                      )
-                      val accessCookie = CookieUtils.createAccessTokenCookie(result.accessToken)
-                      val newRefreshCookie = CookieUtils.createRefreshCookie(result.newRefreshToken)
-                      val clearBaseCookie = CookieUtils.clearBaseTokenCookie
-                      Ok(apiSuccess.asJson)
-                        .map(_.addCookie(accessCookie))
-                        .map(_.addCookie(newRefreshCookie))
-                        .map(_.addCookie(clearBaseCookie))
-                        .map(_.withContentType(jsonContent))
-                  }
-            }
     }

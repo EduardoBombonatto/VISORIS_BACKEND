@@ -122,19 +122,12 @@ object OpenApiSpec:
   private val loginSuccessExample: Json =
     obj(
       "erro" -> bool(false),
-      "message" -> str("Autenticado. Selecione o Workspace."),
+      "message" -> str("Autenticado com sucesso."),
       "data" -> obj(
         "user" -> obj(
           "id" -> str("8712345678901234567"),
           "fullName" -> str("Dra. Maria Souza"),
           "professionalDocument" -> str("CRM/SP 123456")
-        ),
-        "workspaces" -> Json.arr(
-          obj(
-            "clinicId" -> str("7612345678901234567"),
-            "name" -> str("Clínica Visoris Centro"),
-            "role" -> str("DOCTOR")
-          )
         )
       ),
       "httpcode" -> int(200),
@@ -150,8 +143,7 @@ object OpenApiSpec:
           "id" -> str("8712345678901234567"),
           "fullName" -> str("Dra. Maria Souza"),
           "professionalDocument" -> str("CRM/SP 123456")
-        ),
-        "workspaces" -> Json.arr()
+        )
       ),
       "httpcode" -> int(201),
       "timestamp" -> str(timestampExample)
@@ -166,13 +158,6 @@ object OpenApiSpec:
           "id" -> str("8712345678901234567"),
           "fullName" -> str("Dra. Maria Souza"),
           "professionalDocument" -> str("CRM/SP 123456")
-        ),
-        "workspaces" -> Json.arr(
-          obj(
-            "clinicId" -> str("7612345678901234567"),
-            "name" -> str("Clínica Visoris Centro"),
-            "role" -> str("DOCTOR")
-          )
         )
       ),
       "httpcode" -> int(200),
@@ -197,41 +182,21 @@ object OpenApiSpec:
       "timestamp" -> str(timestampExample)
     )
 
-  private val workspaceSuccessExample: Json =
-    obj(
-      "erro" -> bool(false),
-      "message" -> str("Sessão de Workspace iniciada."),
-      "data" -> obj(
-        "activeWorkspace" -> obj(
-          "clinicId" -> str("7612345678901234567"),
-          "name" -> str("Clínica Visoris Centro"),
-          "role" -> str("DOCTOR")
-        )
-      ),
-      "httpcode" -> int(200),
-      "timestamp" -> str(timestampExample)
-    )
-
   // Cookie descriptions -------------------------------------------------------
 
-  private val partialSessionCookies: String =
-    "Define os cookies de sessão parcial: `baseToken` (HttpOnly, Secure, SameSite=Strict, " +
-      "Path=/api/v1/auth/workspace, Max-Age=300) e `refreshToken` (HttpOnly, Secure, SameSite=Strict, " +
-      "Path=/api/v1/auth, Max-Age=604800)."
+  private val sessionCookies: String =
+    "Define os cookies de sessão: `accessToken` (HttpOnly, Secure, SameSite=Strict, " +
+      "Path=/api/v1, Max-Age=900) e `refreshToken` (HttpOnly, Secure, SameSite=Strict, " +
+      "Path=/, Max-Age=604800)."
 
   private val refreshedSessionCookies: String =
     "Define os cookies de sessão renovada: `accessToken` (HttpOnly, Secure, SameSite=Strict, " +
       "Path=/api/v1, Max-Age=900) e novo `refreshToken` (HttpOnly, Secure, SameSite=Strict, " +
-      "Path=/api/v1/auth, Max-Age=604800). O refresh token anterior é rotacionado (revogado)."
-
-  private val workspaceSessionCookies: String =
-    "Define os cookies de sessão do workspace: `accessToken` (HttpOnly, Secure, SameSite=Strict, " +
-      "Path=/api/v1, Max-Age=900), novo `refreshToken` (HttpOnly, Secure, SameSite=Strict, " +
-      "Path=/api/v1/auth, Max-Age=604800) e limpa o `baseToken` (Max-Age=0)."
+      "Path=/, Max-Age=604800). O refresh token anterior é rotacionado (revogado)."
 
   private val logoutClearingCookies: String =
-    "Limpa os cookies de sessão: `accessToken` (Path=/api/v1), `refreshToken` (Path=/api/v1/auth) e " +
-      "`baseToken` (Path=/api/v1/auth/workspace), todos com `Max-Age=0` para que o navegador os remova imediatamente."
+    "Limpa os cookies de sessão: `accessToken` (Path=/api/v1) e `refreshToken` (Path=/), " +
+      "todos com `Max-Age=0` para que o navegador os remova imediatamente."
 
   // Operations ----------------------------------------------------------------
 
@@ -241,14 +206,13 @@ object OpenApiSpec:
     "/api/v1/auth/login" -> obj(
       "post" -> obj(
         "tags" -> Json.arr(str(authTag)),
-        "summary" -> str("Autentica um usuário e inicia uma sessão parcial (Base Token)."),
+        "summary" -> str("Autentica um usuário e inicia a sessão."),
         "description" -> str(
-          """Valida as credenciais do usuário. Em caso de sucesso retorna os dados do usuário e a lista de
-            |workspaces (clínicas) dos quais ele é membro, além de definir os cookies `baseToken`
-            |(300s) e `refreshToken` (7 dias).
+          """Valida as credenciais do usuário. Em caso de sucesso retorna os dados do usuário
+            |(ID, nome completo e documento profissional) e define os cookies `accessToken`
+            |(900s) e `refreshToken` (7 dias).
             |
-            |O `baseToken` deve ser enviado na rota POST /api/v1/auth/workspace para selecionar um workspace
-            |e obter o `accessToken`. Falhas de autenticação retornam sempre a mesma mensagem genérica
+            |Falhas de autenticação retornam sempre a mesma mensagem genérica
             |"Credenciais inválidas." para não revelar quais credenciais estão incorretas.""".stripMargin),
         "operationId" -> str("authLogin"),
         "requestBody" -> obj(
@@ -257,10 +221,10 @@ object OpenApiSpec:
         ),
         "responses" -> obj(
           "200" -> jsonResponseWithCookies(
-            "Login bem-sucedido. Retorna os dados do usuário e seus workspaces e define os cookies `baseToken` e `refreshToken`.",
+            "Login bem-sucedido. Retorna os dados do usuário e define os cookies `accessToken` e `refreshToken`.",
             successEnvelope("LoginResponse"),
             loginSuccessExample,
-            partialSessionCookies
+            sessionCookies
           ),
           "400" -> validationResponse(
             """Requisição inválida. Dois cenários possíveis:
@@ -330,10 +294,9 @@ object OpenApiSpec:
     "/api/v1/auth/register" -> obj(
       "post" -> obj(
         "tags" -> Json.arr(str(authTag)),
-        "summary" -> str("Cria uma conta de usuário (DOCTOR) e inicia uma sessão parcial."),
+        "summary" -> str("Cria uma conta de usuário (DOCTOR) e inicia a sessão."),
         "description" -> str(
-          """Cria a conta e já emite os cookies `baseToken` (300s) e `refreshToken` (7 dias).
-            |A lista de workspaces da resposta é sempre vazia, pois o vínculo com clínicas é criado depois.
+          """Cria a conta e já emite os cookies `accessToken` (900s) e `refreshToken` (7 dias).
             |
             |Regras de validação:
             |- `fullName`, `email`, `password` e `professionalDocument` são obrigatórios (o documento pode vir `null`, mas não vazio).
@@ -347,10 +310,10 @@ object OpenApiSpec:
         ),
         "responses" -> obj(
           "201" -> jsonResponseWithCookies(
-            "Conta criada com sucesso. Retorna os dados do usuário e define os cookies `baseToken` e `refreshToken`.",
+            "Conta criada com sucesso. Retorna os dados do usuário e define os cookies `accessToken` e `refreshToken`.",
             successEnvelope("RegisterResponse"),
             registerSuccessExample,
-            partialSessionCookies
+            sessionCookies
           ),
           "400" -> validationResponse(
             """Requisição inválida. Dois cenários possíveis:
@@ -385,73 +348,13 @@ object OpenApiSpec:
       )
     )
 
-  private val workspacePath: (String, Json) =
-    "/api/v1/auth/workspace" -> obj(
-      "post" -> obj(
-        "tags" -> Json.arr(str(authTag)),
-        "summary" -> str("Seleciona o workspace (clínica) e emite o access token."),
-        "description" -> str(
-          """Usa o `baseToken` (emitido em login/registro) e o `refreshToken` para escolher a clínica ativa.
-            |Em caso de sucesso: emite `accessToken` (900s), rotaciona o `refreshToken` e invalida (blacklist)
-            |o `baseToken` — o mesmo `baseToken` não pode ser reutilizado.
-            |
-            |O `clinicId` deve ser um número inteiro positivo correspondente a uma clínica da qual o usuário é membro.""".stripMargin),
-        "operationId" -> str("authSelectWorkspace"),
-        "security" -> Json.arr(obj("baseTokenCookie" -> Json.arr()), obj("refreshTokenCookie" -> Json.arr())),
-        "requestBody" -> obj(
-          "required" -> bool(true),
-          "content" -> obj("application/json" -> obj("schema" -> ref("WorkspaceRequest")))
-        ),
-        "responses" -> obj(
-          "200" -> jsonResponseWithCookies(
-            "Sessão de workspace iniciada. Define os cookies `accessToken`, novo `refreshToken` e limpa o `baseToken`.",
-            successEnvelope("WorkspaceResponse"),
-            workspaceSuccessExample,
-            workspaceSessionCookies
-          ),
-          "400" -> validationResponse(
-            """Requisição inválida. Dois cenários possíveis:
-              |1. Corpo malformado ou tipos incorretos — `data=null` com message "Requisição inválida. Verifique o formato dos dados.".
-              |2. `clinicId` inválido — obrigatório, deve ser um número inteiro positivo.""".stripMargin,
-            List(
-              "corpo-malformado" -> genericErrorExample("Requisição inválida. Verifique o formato dos dados.", 400),
-              "clinic-id-invalido" -> validationExample(List(
-                "clinicId" -> "clinicId deve ser um número inteiro positivo."
-              ))
-            )
-          ),
-          "401" -> errorResponses(
-            """Não autorizado. Vários cenários possíveis, todos com `erro=true` e `data=null`:
-              |1. Cookie `baseToken` ausente, inválido, expirado ou já utilizado (blacklist) → "Base Token inválido ou expirado."
-              |2. Cookie `refreshToken` ausente ou desconhecido → "Refresh token inválido."
-              |3. Refresh token revogado → "Refresh token revogado." (indício de roubo)
-              |4. Refresh token expirado → "Sessão expirada."""".stripMargin,
-            List(
-              "base-token-invalido" -> genericErrorExample("Base Token inválido ou expirado.", 401),
-              "refresh-token-invalido" -> genericErrorExample("Refresh token inválido.", 401),
-              "sessao-expirada" -> genericErrorExample("Sessão expirada.", 401),
-              "refresh-token-revogado" -> genericErrorExample("Refresh token revogado.", 401)
-            )
-          ),
-          "403" -> errorResponse(
-            "Acesso negado. O usuário não é membro da clínica informada.",
-            genericErrorExample("Acesso negado ao workspace selecionado.", 403)
-          ),
-          "500" -> errorResponse(
-            "Erro interno do servidor.",
-            genericErrorExample("Erro interno ao processar a seleção de workspace.", 500)
-          )
-        )
-      )
-    )
-
   private val mePath: (String, Json) =
     "/api/v1/auth/me" -> obj(
       "get" -> obj(
         "tags" -> Json.arr(str(authTag)),
         "summary" -> str("Restaura a sessão do usuário autenticado."),
         "description" -> str(
-          """Retorna o usuário autenticado e seus workspaces a partir dos cookies.
+          """Retorna o usuário autenticado a partir dos cookies.
             |Se o `accessToken` for válido, a sessão é retornada diretamente. Caso contrário,
             |tenta rotacionar a sessão usando o `refreshToken` (emitindo novos cookies `accessToken`
             |e `refreshToken`) antes de retornar os dados.""".stripMargin),
@@ -459,7 +362,7 @@ object OpenApiSpec:
         "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr()), obj("refreshTokenCookie" -> Json.arr())),
         "responses" -> obj(
           "200" -> jsonResponseWithCookies(
-            "Sessão restaurada com sucesso. Retorna o usuário e seus workspaces. Quando a sessão é renovada, define os cookies `accessToken` e novo `refreshToken`.",
+            "Sessão restaurada com sucesso. Retorna o usuário. Quando a sessão é renovada, define os cookies `accessToken` e novo `refreshToken`.",
             successEnvelope("LoginResponse"),
             meSuccessExample,
             refreshedSessionCookies
@@ -485,14 +388,14 @@ object OpenApiSpec:
         "tags" -> Json.arr(str(authTag)),
         "summary" -> str("Encerra a sessão atual e limpa os cookies de sessão."),
         "description" -> str(
-          """Revoga o `refreshToken` recebido via cookie e limpa os cookies `accessToken`, `refreshToken`
-            |e `baseToken` (Max-Age=0). Não possui corpo de requisição e é idempotente: cookies ausentes,
+          """Revoga o `refreshToken` recebido via cookie e limpa os cookies `accessToken` e `refreshToken`
+            |(Max-Age=0). Não possui corpo de requisição e é idempotente: cookies ausentes,
             |desconhecidos ou já revogados ainda retornam 200.""".stripMargin),
         "operationId" -> str("authLogout"),
         "security" -> Json.arr(obj("refreshTokenCookie" -> Json.arr())),
         "responses" -> obj(
           "200" -> jsonResponseWithCookies(
-            "Sessão encerrada. Limpa os cookies `accessToken`, `refreshToken` e `baseToken` (Max-Age=0).",
+            "Sessão encerrada. Limpa os cookies `accessToken` e `refreshToken` (Max-Age=0).",
             envelope(obj("type" -> str("object"), "nullable" -> bool(true))),
             logoutSuccessExample,
             logoutClearingCookies
@@ -507,23 +410,15 @@ object OpenApiSpec:
 
   // Components ------------------------------------------------------------------
 
-  private val securitySchemes: Json =    obj(
-      "baseTokenCookie" -> obj(
-        "type" -> str("apiKey"),
-        "in" -> str("cookie"),
-        "name" -> str("baseToken"),
-        "description" -> str(
-          "Base Token emitido em POST /api/v1/auth/login e POST /api/v1/auth/register. " +
-            "Expira em 300s e é revogado (blacklist) após uso na seleção de workspace."
-        )
-      ),
+  private val securitySchemes: Json =
+    obj(
       "refreshTokenCookie" -> obj(
         "type" -> str("apiKey"),
         "in" -> str("cookie"),
         "name" -> str("refreshToken"),
         "description" -> str(
           "Refresh Token emitido em login/registro e rotacionado em POST /api/v1/auth/refresh. " +
-            "Expira em 7 dias. Use o valor exibido no cookie após login/registro."
+            "Expira em 7 dias (Path=/). Use o valor exibido no cookie após login/registro."
         )
       ),
       "accessTokenCookie" -> obj(
@@ -531,7 +426,7 @@ object OpenApiSpec:
         "in" -> str("cookie"),
         "name" -> str("accessToken"),
         "description" -> str(
-          "Access Token emitido em POST /api/v1/auth/refresh e POST /api/v1/auth/workspace. " +
+          "Access Token emitido em login/registro e renovado em POST /api/v1/auth/refresh. " +
             "Expira em 900s e autentica as demais rotas sob /api/v1."
         )
       )
@@ -557,45 +452,19 @@ object OpenApiSpec:
         "password" -> stringField,
         "professionalDocument" -> stringNullableField
       ),
-      "WorkspaceRequest" -> requiredObject(
-        List("clinicId"),
-        "clinicId" -> obj(
-          "type" -> str("string"),
-          "description" -> str("ID da clínica (Snowflake). Deve ser um número inteiro positivo."),
-          "pattern" -> str("^[1-9][0-9]*$")
-        )
-      ),
       "UserData" -> requiredObject(
         List("id", "fullName"),
         "id" -> obj("type" -> str("string"), "description" -> str("ID do usuário (Snowflake).")),
         "fullName" -> stringField,
         "professionalDocument" -> stringNullableField
       ),
-      "WorkspaceData" -> requiredObject(
-        List("clinicId", "name", "role"),
-        "clinicId" -> obj("type" -> str("string"), "description" -> str("ID da clínica (Snowflake).")),
-        "name" -> stringField,
-        "role" -> stringField
-      ),
       "LoginResponse" -> requiredObject(
-        List("user", "workspaces"),
-        "user" -> ref("UserData"),
-        "workspaces" -> arrayOf(ref("WorkspaceData"))
+        List("user"),
+        "user" -> ref("UserData")
       ),
       "RegisterResponse" -> requiredObject(
-        List("user", "workspaces"),
-        "user" -> ref("UserData"),
-        "workspaces" -> arrayOf(stringField)
-      ),
-      "ActiveWorkspace" -> requiredObject(
-        List("clinicId", "name", "role"),
-        "clinicId" -> obj("type" -> str("string"), "description" -> str("ID da clínica (Snowflake).")),
-        "name" -> stringField,
-        "role" -> stringField
-      ),
-      "WorkspaceResponse" -> requiredObject(
-        List("activeWorkspace"),
-        "activeWorkspace" -> ref("ActiveWorkspace")
+        List("user"),
+        "user" -> ref("UserData")
       ),
       "RefreshResponse" -> requiredObject(
         List("expiresIn"),
@@ -618,10 +487,9 @@ object OpenApiSpec:
           """API de autenticação e sessões do Visoris.
             |
             |O fluxo de autenticação é baseado em cookies HttpOnly:
-            |1. `POST /api/v1/auth/register` ou `POST /api/v1/auth/login` → recebe os cookies `baseToken` e `refreshToken`.
-            |2. `POST /api/v1/auth/workspace` com o `baseToken` + `refreshToken` → recebe o `accessToken` e um novo `refreshToken`.
-            |3. `POST /api/v1/auth/refresh` com o `refreshToken` → renova `accessToken` e `refreshToken`.
-            |4. `POST /api/v1/auth/logout` com o `refreshToken` → revoga o token e limpa os cookies de sessão.
+            |1. `POST /api/v1/auth/register` ou `POST /api/v1/auth/login` → recebe os cookies `accessToken` e `refreshToken`.
+            |2. `POST /api/v1/auth/refresh` com o `refreshToken` → renova `accessToken` e `refreshToken`.
+            |3. `POST /api/v1/auth/logout` com o `refreshToken` → revoga o token e limpa os cookies de sessão.
             |
             |Todos os tokens são transportados exclusivamente via cookies. Para testar no Swagger UI,
             |faça login/registro e copie os valores dos cookies de resposta para a seção Authorize.""".stripMargin
@@ -631,9 +499,9 @@ object OpenApiSpec:
         obj("url" -> str("http://localhost:8080"), "description" -> str("Servidor de desenvolvimento local"))
       ),
       "tags" -> Json.arr(
-        obj("name" -> str(authTag), "description" -> str("Autenticação, registro e seleção de workspace."))
+        obj("name" -> str(authTag), "description" -> str("Autenticação, registro e renovação de sessão."))
       ),
-      "paths" -> obj(loginPath, refreshPath, registerPath, workspacePath, mePath, logoutPath),
+      "paths" -> obj(loginPath, refreshPath, registerPath, mePath, logoutPath),
       "components" -> obj(
         "securitySchemes" -> securitySchemes,
         "schemas" -> schemas

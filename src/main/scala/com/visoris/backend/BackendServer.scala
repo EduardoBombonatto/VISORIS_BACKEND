@@ -7,8 +7,8 @@ import com.visoris.backend.config.Database
 import com.visoris.backend.docs.DocsController
 import com.visoris.backend.iam.controller.AuthController
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
-import com.visoris.backend.iam.service.{AuthService, RegistrationService, WorkspaceService}
-import com.visoris.backend.shared.auth.{AuthMiddleware, TokenBlacklist, TokenService}
+import com.visoris.backend.iam.service.{AuthService, RegistrationService}
+import com.visoris.backend.shared.auth.{AuthMiddleware, TokenService}
 import com.visoris.backend.shared.dto.ApiResponse
 import fs2.io.net.Network
 import io.circe.syntax.*
@@ -69,10 +69,8 @@ object BackendServer:
       registrationService = RegistrationService.make[F](tokenService, transactor, userRepo, refreshTokenRepo)
       authService = AuthService.make[F](tokenService, transactor, userRepo, refreshTokenRepo)
       authMiddleware = AuthMiddleware.make[F](tokenService, userRepo, transactor)
-      tokenBlacklist <- Resource.eval(TokenBlacklist.make[F])
-      workspaceService = WorkspaceService.make[F](tokenService, tokenBlacklist, transactor, userRepo, refreshTokenRepo)
 
-      authRoutes = AuthController.routes[F](registrationService, authService, workspaceService)
+      authRoutes = AuthController.routes[F](registrationService, authService)
       docsRoutes = DocsController.routes[F]
       httpApp = corsConfig(errorHandler((authRoutes <+> docsRoutes).orNotFound))
 

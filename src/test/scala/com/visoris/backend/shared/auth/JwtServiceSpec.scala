@@ -8,13 +8,6 @@ class JwtServiceSpec extends CatsEffectSuite:
   private val secret = "test-secret-key-for-unit-tests"
   private val tokenService = TokenService.make(secret)
 
-  private val baseClaims = CustomClaims(
-    userId = "123",
-    email = "dr.eduardo@visoris.com",
-    roles = List("DOCTOR"),
-    clinicId = None,
-    tokenType = "BASE"
-  )
   private val accessClaims = CustomClaims(
     userId = "456",
     email = "dr.ana@visoris.com",
@@ -23,40 +16,11 @@ class JwtServiceSpec extends CatsEffectSuite:
     tokenType = "ACCESS"
   )
 
-  test("createBaseToken should produce a valid JWT string") {
-    for token <- tokenService.createBaseToken[IO](baseClaims)
-    yield
-      assert(token.nonEmpty)
-      assert(token.count(_ == '.') == 2)
-  }
-
   test("createAccessToken should produce a valid JWT string") {
     for token <- tokenService.createAccessToken[IO](accessClaims)
     yield
       assert(token.nonEmpty)
       assert(token.count(_ == '.') == 2)
-  }
-
-  test("validateToken should return claims for a base token validated as BASE") {
-    for
-      token <- tokenService.createBaseToken[IO](baseClaims)
-      result <- tokenService.validateToken[IO](token, "BASE")
-    yield result match
-      case Some(claims) =>
-        assertEquals(claims.userId, "123")
-        assertEquals(claims.email, "dr.eduardo@visoris.com")
-        assertEquals(claims.roles, List("DOCTOR"))
-        assertEquals(claims.clinicId, None)
-        assertEquals(claims.tokenType, "BASE")
-      case None =>
-        fail("Expected valid base token to validate")
-  }
-
-  test("validateToken should reject a base token validated as ACCESS") {
-    for
-      token <- tokenService.createBaseToken[IO](baseClaims)
-      result <- tokenService.validateToken[IO](token, "ACCESS")
-    yield assert(result.isEmpty)
   }
 
   test("validateToken should return claims for an access token validated as ACCESS") {
@@ -74,25 +38,6 @@ class JwtServiceSpec extends CatsEffectSuite:
         fail("Expected valid access token to validate")
   }
 
-  test("validateToken should reject an access token validated as BASE") {
-    for
-      token <- tokenService.createAccessToken[IO](accessClaims)
-      result <- tokenService.validateToken[IO](token, "BASE")
-    yield assert(result.isEmpty)
-  }
-
-  test("createBaseToken should always force clinicId to None") {
-    for
-      token <- tokenService.createBaseToken[IO](accessClaims)
-      result <- tokenService.validateToken[IO](token, "BASE")
-    yield result match
-      case Some(claims) =>
-        assertEquals(claims.clinicId, None)
-        assertEquals(claims.tokenType, "BASE")
-      case None =>
-        fail("Expected forced base token to validate")
-  }
-
   test("validateToken should return None for a malformed token") {
     for result <- tokenService.validateToken[IO]("invalid.token.here", "ACCESS")
     yield assert(result.isEmpty)
@@ -100,18 +45,18 @@ class JwtServiceSpec extends CatsEffectSuite:
 
   test("validateToken should return None for a token signed with the wrong secret") {
     for
-      token <- tokenService.createBaseToken[IO](baseClaims)
+      token <- tokenService.createAccessToken[IO](accessClaims)
       otherService = TokenService.make("wrong-secret")
-      result <- otherService.validateToken[IO](token, "BASE")
+      result <- otherService.validateToken[IO](token, "ACCESS")
     yield assert(result.isEmpty)
   }
 
   test("generated tokens should carry issuer and subject") {
-    for token <- tokenService.createBaseToken[IO](baseClaims)
+    for token <- tokenService.createAccessToken[IO](accessClaims)
     yield
       val claim = pdi.jwt.JwtCirce.decode(token, secret, Seq(pdi.jwt.JwtAlgorithm.HS256)).toOption.get
       assertEquals(claim.issuer, Some("api"))
-      assertEquals(claim.subject, Some("123"))
+      assertEquals(claim.subject, Some("456"))
   }
 
 class OpaqueTokenGeneratorSpec extends CatsEffectSuite:

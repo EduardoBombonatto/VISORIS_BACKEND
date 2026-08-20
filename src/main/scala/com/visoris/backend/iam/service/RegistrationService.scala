@@ -12,7 +12,7 @@ import org.typelevel.log4cats.Logger
 import java.time.Instant
 
 final case class RegistrationResult(
-  baseToken: String,
+  accessToken: String,
   user: User,
   refreshToken: String
 )
@@ -112,13 +112,13 @@ object RegistrationService:
         now <- Async[F].delay(Instant.now)
         passwordHash <- PasswordHasher.hash[F](request.password)
         userId <- transactor.trans.apply(sql"SELECT next_id()".query[Long].unique)
-        baseToken <- tokenService.createBaseToken[F](
+        accessToken <- tokenService.createAccessToken[F](
           CustomClaims(
             userId = userId.toString,
             email = normalizedEmail,
             roles = List("DOCTOR"),
             clinicId = None,
-            tokenType = "BASE"
+            tokenType = "ACCESS"
           )
         )
         refreshTokenPlain <- OpaqueTokenGenerator.generate[F]
@@ -135,7 +135,7 @@ object RegistrationService:
 
         _ <- userRepo.create(user).transact(transactor)
         result <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress, None, None).transact(transactor).as(
-          Right(RegistrationResult(baseToken, user, refreshTokenPlain))
+          Right(RegistrationResult(accessToken, user, refreshTokenPlain))
         )
       yield result).flatTap {
         case Left(RegistrationError.Internal(msg)) =>
