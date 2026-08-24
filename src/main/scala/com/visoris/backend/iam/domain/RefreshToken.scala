@@ -12,7 +12,5 @@ final case class RefreshToken(
   revokedReason: Option[String],
   deviceInfo: Option[String],
   ipAddress: Option[String],
-  clinicId: Option[Long],
-  role: Option[String],
   createdAt: Instant
 )

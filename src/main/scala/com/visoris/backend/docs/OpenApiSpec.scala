@@ -201,6 +201,7 @@ object OpenApiSpec:
   // Operations ----------------------------------------------------------------
 
   private val authTag = "Auth"
+  private val clinicsTag = "Clinics"
 
   private val loginPath: (String, Json) =
     "/api/v1/auth/login" -> obj(
@@ -408,6 +409,150 @@ object OpenApiSpec:
       )
     )
 
+  // Clinics ---------------------------------------------------------------------
+
+  private val clinicsListSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Clínicas listadas com sucesso."),
+      "data" -> obj(
+        "clinics" -> Json.arr(
+          obj(
+            "id" -> str("8712345678901234567"),
+            "name" -> str("Clínica Vida"),
+            "cnpj" -> str("11444777000161"),
+            "phone" -> str("(11) 5555-0000"),
+            "address" -> str("Av. Paulista, 1000")
+          )
+        )
+      ),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val createClinicSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Clínica criada com sucesso."),
+      "data" -> obj(
+        "clinic" -> obj(
+          "id" -> str("8712345678901234567"),
+          "name" -> str("Clínica Vida"),
+          "cnpj" -> str("11444777000161"),
+          "phone" -> str("(11) 5555-0000"),
+          "address" -> str("Av. Paulista, 1000")
+        )
+      ),
+      "httpcode" -> int(201),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val reuseClinicSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Clínica vinculada com sucesso."),
+      "data" -> obj(
+        "clinic" -> obj(
+          "id" -> str("8712345678901234567"),
+          "name" -> str("Clínica Vida"),
+          "cnpj" -> str("11444777000161"),
+          "phone" -> str("(11) 5555-0000"),
+          "address" -> str("Av. Paulista, 1000")
+        )
+      ),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val clinicsGetOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(clinicsTag)),
+      "summary" -> str("Lista as clínicas vinculadas ao usuário autenticado."),
+      "description" -> str(
+        """Retorna somente as clínicas vinculadas ao usuário autenticado (JOIN entre
+          |`clinics` e `doctor_clinics` via `user_id`). Nunca retorna clínicas de outros
+          |usuários. Retorna uma lista vazia quando não há vínculos.""".stripMargin),
+      "operationId" -> str("clinicsList"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample(
+          "Lista de clínicas do usuário autenticado.",
+          successEnvelope("ClinicListResponse"),
+          clinicsListSuccessExample
+        ),
+        "401" -> errorResponse(
+          "Não autenticado. Token de acesso ausente, inválido ou expirado.",
+          genericErrorExample("Não autenticado.", 401)
+        ),
+        "500" -> errorResponse(
+          "Erro interno do servidor.",
+          genericErrorExample("Erro interno do servidor. Tente novamente.", 500)
+        )
+      )
+    )
+
+  private val clinicsPostOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(clinicsTag)),
+      "summary" -> str("Registra ou vincula uma clínica ao usuário autenticado."),
+      "description" -> str(
+        """Cria uma nova clínica e a vincula ao usuário autenticado, ou reutiliza uma clínica
+          |existente identificada pelo CNPJ. Nunca duplica clínicas nem vínculos.
+          |
+          |Regras:
+          |- `name` é obrigatório (não pode ser vazio, até 255 caracteres).
+          |- `cnpj` é opcional; quando informado deve ter 14 dígitos e dígitos verificadores
+          |  válidos (Módulo 11) e é normalizado para apenas dígitos.
+          |- Quando o CNPJ corresponde a uma clínica existente, os campos `name`/`phone`/`address`
+          |  enviados são ignorados e o vínculo é criado (ou mantido) de forma idempotente.
+          |- Retorna HTTP 201 quando a clínica é criada e HTTP 200 quando uma clínica existente
+          |  é reutilizada/vinculada.""".stripMargin),
+      "operationId" -> str("clinicsCreate"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("CreateClinicRequest")))
+      ),
+      "responses" -> obj(
+        "201" -> jsonResponseWithExample(
+          "Clínica criada e vinculada com sucesso.",
+          successEnvelope("CreateClinicResponse"),
+          createClinicSuccessExample
+        ),
+        "200" -> jsonResponseWithExample(
+          "Clínica existente reutilizada/vinculada (campos enviados ignorados).",
+          successEnvelope("CreateClinicResponse"),
+          reuseClinicSuccessExample
+        ),
+        "400" -> validationResponse(
+          """Requisição inválida. Dois cenários possíveis:
+            |1. Corpo malformado ou tipos incorretos — `data=null` com message "Requisição inválida. Verifique o formato dos dados.".
+            |2. Falha de validação — `data.errors` com um erro por campo, incluindo:
+            |   nome obrigatório, tamanhos de telefone/endereço e CNPJ com dígitos verificadores inválidos.""".stripMargin,
+          List(
+            "corpo-malformado" -> genericErrorExample("Requisição inválida. Verifique o formato dos dados.", 400),
+            "nome-obrigatorio" -> validationExample(List(
+              "name" -> "Nome da clínica é obrigatório."
+            )),
+            "cnpj-invalido" -> validationExample(List(
+              "cnpj" -> "CNPJ inválido."
+            ))
+          )
+        ),
+        "401" -> errorResponse(
+          "Não autenticado. Token de acesso ausente, inválido ou expirado.",
+          genericErrorExample("Não autenticado.", 401)
+        ),
+        "500" -> errorResponse(
+          "Erro interno do servidor.",
+          genericErrorExample("Erro interno do servidor. Tente novamente.", 500)
+        )
+      )
+    )
+
+  private val clinicsPath: (String, Json) =
+    "/api/v1/clinics" -> obj("get" -> clinicsGetOperation, "post" -> clinicsPostOperation)
+
   // Components ------------------------------------------------------------------
 
   private val securitySchemes: Json =
@@ -474,6 +619,29 @@ object OpenApiSpec:
         List("field", "message"),
         "field" -> obj("type" -> str("string"), "description" -> str("Nome do campo que falhou na validação.")),
         "message" -> obj("type" -> str("string"), "description" -> str("Mensagem de erro do campo."))
+      ),
+      "ClinicData" -> requiredObject(
+        List("id", "name"),
+        "id" -> obj("type" -> str("string"), "description" -> str("ID da clínica (Snowflake).")),
+        "name" -> stringField,
+        "cnpj" -> stringNullableField,
+        "phone" -> stringNullableField,
+        "address" -> stringNullableField
+      ),
+      "CreateClinicRequest" -> requiredObject(
+        List("name"),
+        "name" -> obj("type" -> str("string"), "description" -> str("Nome da clínica (obrigatório, não pode ser vazio).")),
+        "cnpj" -> obj("type" -> str("string"), "nullable" -> bool(true), "description" -> str("CNPJ opcional. Deve ter 14 dígitos com dígitos verificadores válidos (Módulo 11); normalizado para apenas dígitos.")),
+        "phone" -> stringNullableField,
+        "address" -> stringNullableField
+      ),
+      "ClinicListResponse" -> requiredObject(
+        List("clinics"),
+        "clinics" -> arrayOf(ref("ClinicData"))
+      ),
+      "CreateClinicResponse" -> requiredObject(
+        List("clinic"),
+        "clinic" -> ref("ClinicData")
       )
     )
 
@@ -499,9 +667,10 @@ object OpenApiSpec:
         obj("url" -> str("http://localhost:8080"), "description" -> str("Servidor de desenvolvimento local"))
       ),
       "tags" -> Json.arr(
-        obj("name" -> str(authTag), "description" -> str("Autenticação, registro e renovação de sessão."))
+        obj("name" -> str(authTag), "description" -> str("Autenticação, registro e renovação de sessão.")),
+        obj("name" -> str(clinicsTag), "description" -> str("Clínicas (locais de atendimento) do usuário autenticado."))
       ),
-      "paths" -> obj(loginPath, refreshPath, registerPath, mePath, logoutPath),
+      "paths" -> obj(loginPath, refreshPath, registerPath, mePath, logoutPath, clinicsPath),
       "components" -> obj(
         "securitySchemes" -> securitySchemes,
         "schemas" -> schemas

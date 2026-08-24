@@ -117,7 +117,6 @@ object RegistrationService:
             userId = userId.toString,
             email = normalizedEmail,
             roles = List("DOCTOR"),
-            clinicId = None,
             tokenType = "ACCESS"
           )
         )
@@ -134,7 +133,7 @@ object RegistrationService:
         )
 
         _ <- userRepo.create(user).transact(transactor)
-        result <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress, None, None).transact(transactor).as(
+        result <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress).transact(transactor).as(
           Right(RegistrationResult(accessToken, user, refreshTokenPlain))
         )
       yield result).flatTap {

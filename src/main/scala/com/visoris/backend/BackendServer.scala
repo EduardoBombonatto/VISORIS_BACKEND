@@ -3,6 +3,9 @@ package com.visoris.backend
 import cats.effect.{Async, Resource}
 import cats.syntax.all.*
 import com.comcast.ip4s.*
+import com.visoris.backend.clinics.controller.ClinicsController
+import com.visoris.backend.clinics.repository.{ClinicRepository, DoctorClinicRepository}
+import com.visoris.backend.clinics.service.ClinicsService
 import com.visoris.backend.config.Database
 import com.visoris.backend.docs.DocsController
 import com.visoris.backend.iam.controller.AuthController
@@ -70,9 +73,14 @@ object BackendServer:
       authService = AuthService.make[F](tokenService, transactor, userRepo, refreshTokenRepo)
       authMiddleware = AuthMiddleware.make[F](tokenService, userRepo, transactor)
 
+      clinicRepo = ClinicRepository.make[F](transactor)
+      doctorClinicRepo = DoctorClinicRepository.make[F](transactor)
+      clinicsService = ClinicsService.make[F](clinicRepo, doctorClinicRepo, transactor)
+      clinicsRoutes = authMiddleware(ClinicsController.routes[F](clinicsService))
+
       authRoutes = AuthController.routes[F](registrationService, authService)
       docsRoutes = DocsController.routes[F]
-      httpApp = corsConfig(errorHandler((authRoutes <+> docsRoutes).orNotFound))
+      httpApp = corsConfig(errorHandler((authRoutes <+> docsRoutes <+> clinicsRoutes).orNotFound))
 
       _ <-
         EmberServerBuilder.default[F]

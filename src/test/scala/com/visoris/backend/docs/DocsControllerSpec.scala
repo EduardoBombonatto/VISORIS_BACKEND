@@ -35,7 +35,10 @@ class DocsControllerSpec extends CatsEffectSuite:
       val paths = json.hcursor.downField("paths").keys.fold(Set.empty[String])(_.toSet)
       assertEquals(
         paths,
-        Set("/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/register", "/api/v1/auth/me", "/api/v1/auth/logout")
+        Set(
+          "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/register", "/api/v1/auth/me",
+          "/api/v1/auth/logout", "/api/v1/clinics"
+        )
       )
   }
 
@@ -75,6 +78,25 @@ class DocsControllerSpec extends CatsEffectSuite:
       assertEquals(responseCodesFor(json, "/api/v1/auth/register"), Set("201", "400", "409", "500"))
   }
 
+  test("clinics documents list (200, 401, 500) and create (201, 200, 400, 401, 500) with cookie security") {
+    val req = Request[IO](Method.GET, uri"/api/v1/docs/openapi.json")
+    for
+      resp <- routes.run(req)
+      body <- resp.as[String]
+    yield
+      val json = parse(body).getOrElse(fail("OpenAPI spec is not valid JSON"))
+      val getCodes = json.hcursor
+        .downField("paths").downField("/api/v1/clinics").downField("get").downField("responses")
+        .keys.fold(Set.empty[String])(_.toSet)
+      assertEquals(getCodes, Set("200", "401", "500"))
+      val postCodes = json.hcursor
+        .downField("paths").downField("/api/v1/clinics").downField("post").downField("responses")
+        .keys.fold(Set.empty[String])(_.toSet)
+      assertEquals(postCodes, Set("201", "200", "400", "401", "500"))
+      val tags = json.hcursor.downField("tags").as[List[Json]].getOrElse(Nil)
+      assert(tags.exists(_.hcursor.downField("name").as[String].contains("Clinics")), "Clinics tag missing")
+  }
+
   test("defines the two cookie security schemes and all schemas") {
     val req = Request[IO](Method.GET, uri"/api/v1/docs/openapi.json")
     for
@@ -92,7 +114,8 @@ class DocsControllerSpec extends CatsEffectSuite:
         Set(
           "LoginRequest", "RegisterRequest",
           "UserData", "LoginResponse", "RegisterResponse",
-          "RefreshResponse", "ValidationError"
+          "RefreshResponse", "ValidationError",
+          "ClinicData", "CreateClinicRequest", "ClinicListResponse", "CreateClinicResponse"
         )
       )
   }

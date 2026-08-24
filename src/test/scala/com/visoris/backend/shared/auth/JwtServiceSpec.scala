@@ -12,7 +12,6 @@ class JwtServiceSpec extends CatsEffectSuite:
     userId = "456",
     email = "dr.ana@visoris.com",
     roles = List("DOCTOR", "ADMIN"),
-    clinicId = Some("99"),
     tokenType = "ACCESS"
   )
 
@@ -32,7 +31,6 @@ class JwtServiceSpec extends CatsEffectSuite:
         assertEquals(claims.userId, "456")
         assertEquals(claims.email, "dr.ana@visoris.com")
         assertEquals(claims.roles, List("DOCTOR", "ADMIN"))
-        assertEquals(claims.clinicId, Some("99"))
         assertEquals(claims.tokenType, "ACCESS")
       case None =>
         fail("Expected valid access token to validate")

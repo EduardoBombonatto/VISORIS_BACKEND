@@ -42,7 +42,6 @@ CREATE TYPE patient_type_enum AS ENUM ('PET', 'HUMAN');
 CREATE TYPE exam_status_enum AS ENUM ('SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED');
 CREATE TYPE report_status_enum AS ENUM ('PENDING', 'DRAFT', 'COMPLETED');
 CREATE TYPE payment_status_enum AS ENUM ('UNPAID', 'PAID', 'INSURANCE');
-CREATE TYPE clinic_invitations_status_enum AS ENUM ('PENDING', 'ACCEPTED', 'CANCELLED');
 
 -- ==============================================================================
 -- MÓDULO 1: IDENTIDADE E ACESSO (IAM)
@@ -61,52 +60,52 @@ CREATE TABLE users
 );
 
 COMMENT
-ON TABLE users IS 'Armazena os veterinários/médicos (Tenants principais atuais).';
+ON TABLE users IS 'Armazena os veterinários/médicos.';
 
 CREATE TABLE refresh_tokens
 (
-    id          BIGINT PRIMARY KEY                DEFAULT next_id(),
-    user_id     BIGINT                   NOT NULL,
-    clinic_id   BIGINT,
-    role        VARCHAR(50),
-    token       VARCHAR(512) UNIQUE      NOT NULL,
-    expires_at  TIMESTAMP WITH TIME ZONE NOT NULL,
-    is_revoked  BOOLEAN                  NOT NULL DEFAULT FALSE,
-    device_info VARCHAR(255),
-    ip_address  VARCHAR(45),
-    created_at  TIMESTAMP WITH TIME ZONE          DEFAULT CURRENT_TIMESTAMP,
+    id             BIGINT PRIMARY KEY                DEFAULT next_id(),
+    user_id        BIGINT                   NOT NULL,
+    token          VARCHAR(512) UNIQUE      NOT NULL,
+    expires_at     TIMESTAMP WITH TIME ZONE NOT NULL,
+    is_revoked     BOOLEAN                  NOT NULL DEFAULT FALSE,
+    revoked_at     TIMESTAMP WITH TIME ZONE,
+    revoked_reason VARCHAR(20),
+    device_info    VARCHAR(255),
+    ip_address     VARCHAR(45),
+    created_at     TIMESTAMP WITH TIME ZONE          DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_refresh_tokens_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );
+
+COMMENT
+ON COLUMN refresh_tokens.revoked_reason IS 'ROTATION, LOGOUT ou THEFT';
 
 -- Índice para acelerar a busca do ‘token’ durante o processo de renovação (refresh)
 CREATE INDEX idx_refresh_tokens_token ON refresh_tokens (token);
 -- Índice para buscar rapidamente todas as sessões ativas de um utilizador
 CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens (user_id);
+-- Índice para buscar as sessões ativas de um utilizador (revogação em família)
+CREATE INDEX idx_refresh_tokens_revoked ON refresh_tokens (user_id, is_revoked);
 
 COMMENT
 ON TABLE refresh_tokens IS 'Armazena as sessões ativas e tokens de renovação dos usuários para controle de segurança.';
 
 -- ==============================================================================
--- MÓDULO 2: GESTÃO DE PARCEIROS (CLÍNICAS)
+-- MÓDULO 2: CLÍNICAS (LOCAIS DE EXAME)
 -- ==============================================================================
 
 CREATE TABLE clinics
 (
-    id               BIGINT PRIMARY KEY       DEFAULT next_id(),
-    name             VARCHAR(255) NOT NULL,
-    cnpj             VARCHAR(20),
-    phone            VARCHAR(20),
-    address          VARCHAR(500),
-    max_active_seats INTEGER      NOT NULL    DEFAULT 1,
-    created_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    id         BIGINT PRIMARY KEY       DEFAULT next_id(),
+    name       VARCHAR(255) NOT NULL,
+    cnpj       VARCHAR(20),
+    phone      VARCHAR(20),
+    address    VARCHAR(500),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-ALTER TABLE refresh_tokens
-    ADD CONSTRAINT fk_refresh_tokens_clinic
-        FOREIGN KEY (clinic_id) REFERENCES clinics (id) ON DELETE CASCADE;
-
--- Tabela de Junção (Mitigação para Escala B2B)
+-- Tabela de Junção (um médico pode atender em várias clínicas, e uma clínica pode ter vários médicos)
 CREATE TABLE doctor_clinics
 (
     user_id    BIGINT REFERENCES users (id) ON DELETE CASCADE,
@@ -118,25 +117,7 @@ CREATE TABLE doctor_clinics
 
 CREATE INDEX idx_doctor_clinics_user ON doctor_clinics (user_id);
 COMMENT
-ON TABLE doctor_clinics IS 'Permite que um vet atenda em várias clínicas, e uma clínica tenha vários vets no futuro.';
-
-CREATE TABLE clinic_invitations
-(
-    id           BIGINT PRIMARY KEY                      DEFAULT next_id(),
-    clinic_id    BIGINT                         NOT NULL REFERENCES clinics (id) ON DELETE CASCADE,
-    email        VARCHAR(255)                   NOT NULL,
-    role         VARCHAR(50)                    NOT NULL DEFAULT 'DOCTOR',
-    invite_token VARCHAR(128) UNIQUE            NOT NULL,
-    status       clinic_invitations_status_enum NOT NULL DEFAULT 'PENDING', -- PENDING, ACCEPTED, CANCELLED
-    expires_at   TIMESTAMP WITH TIME ZONE       NOT NULL,
-    created_at   TIMESTAMP WITH TIME ZONE                DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_invitations_token ON clinic_invitations (invite_token);
-COMMENT
-ON TABLE clinic_invitations IS 'Gerencia convites enviados para médicos participarem de uma clínica.';
-COMMENT
-ON COLUMN clinic_invitations.status IS 'PENDING, ACCEPTED, CANCELLED';
+ON TABLE doctor_clinics IS 'Permite que um vet atenda em várias clínicas, e uma clínica tenha vários vets.';
 
 -- ==============================================================================
 -- MÓDULO 3: PACIENTES E TUTORES
@@ -145,15 +126,14 @@ ON COLUMN clinic_invitations.status IS 'PENDING, ACCEPTED, CANCELLED';
 -- O Responsável Legal / Financeiro
 CREATE TABLE clients
 (
-    id               BIGINT PRIMARY KEY       DEFAULT next_id(),
-    clinic_id        BIGINT       NOT NULL REFERENCES clinics (id) ON DELETE CASCADE,
-    full_name        VARCHAR(255) NOT NULL,
-    document_cpf     VARCHAR(20),
-    email            VARCHAR(255),
-    phone            VARCHAR(20),
-    max_active_seats INTEGER      NOT NULL    DEFAULT 1,
-    created_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    id         BIGINT PRIMARY KEY       DEFAULT next_id(),
+    clinic_id  BIGINT       NOT NULL REFERENCES clinics (id) ON DELETE CASCADE,
+    full_name  VARCHAR(255) NOT NULL,
+    document_cpf VARCHAR(20),
+    email      VARCHAR(255),
+    phone      VARCHAR(20),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_clients_clinic ON clients (clinic_id);

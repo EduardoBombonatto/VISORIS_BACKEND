@@ -111,13 +111,12 @@ object AuthService:
                         userId = user.id.toString,
                         email = user.email,
                         roles = List("DOCTOR"),
-                        clinicId = None,
                         tokenType = "ACCESS"
                       )
                     )
                     refreshTokenPlain <- OpaqueTokenGenerator.generate[F]
                     refreshExpires = now.plusSeconds(refreshExpiresTime)
-                    _ <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress, None, None).transact(transactor)
+                    _ <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress).transact(transactor)
                     _ <- Logger[F].info(s"Login successful for email=$masked")
                   yield Right(LoginResult(accessToken, user, refreshTokenPlain))
               }
@@ -166,7 +165,6 @@ object AuthService:
             userId = rt.userId.toString,
             email = user.fold("")(_.email),
             roles = List("DOCTOR"),
-            clinicId = None,
             tokenType = "ACCESS"
           )
         )
@@ -174,7 +172,7 @@ object AuthService:
         newExpires = now.plusSeconds(7 * 24 * 60 * 60)
         _ <- (for
           _ <- refreshTokenRepo.revokeByToken(rt.token, "ROTATION")
-          _ <- refreshTokenRepo.create(rt.userId, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress, rt.clinicId, rt.role)
+          _ <- refreshTokenRepo.create(rt.userId, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress)
         yield ()).transact(transactor)
         _ <- Logger[F].info(s"Refresh successful for user=${rt.userId}")
       yield Right(RefreshResult(accessToken, 900, newRefreshToken))

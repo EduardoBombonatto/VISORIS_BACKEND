@@ -12,7 +12,6 @@ final case class CustomClaims(
   userId: String,
   email: String,
   roles: List[String],
-  clinicId: Option[String],
   tokenType: String
 )
 

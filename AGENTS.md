@@ -104,3 +104,15 @@ sbt "scalafixAll"     # run scalafix (not configured yet)
 - Assembly merge strategy discards `module-info.class`; `app.jar` is the output name.
 - `.env` is gitignored — never commit `JWT_SECRET` or DB credentials.
 - Generated IDs are Snowflake (BIGINT), not UUIDs. Use `next_id()` from PostgreSQL, not auto-increment.
+
+## Security conventions (project-wide)
+
+- **404, never 403 (cross-user access).** Whenever a user attempts to view a page/resource
+  belonging to another user, the API MUST return `404 Not Found` — never `403`. A 403
+  reveals to an attacker that the target user/resource exists; 404 makes the resource
+  indistinguishable from nonexistent. Every bounded context (IAM, clinics, patients, etc.)
+  must scope queries by the authenticated user id and resolve cross-user access to
+  not-found semantics (404 for by-id lookups, empty list for lists). Never introduce a 403
+  path for resource ownership checks.
+- Do not log PII (name, CPF, birth date, address, medical record number) in plain text; use
+  masked/tokenized representations.
