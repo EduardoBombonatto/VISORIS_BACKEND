@@ -10,6 +10,7 @@ import doobie.util.transactor.Transactor
 trait DoctorClinicRepository[F[_]]:
   def insert(userId: Long, clinicId: Long): ConnectionIO[Unit]
   def findByDoctor(userId: Long): ConnectionIO[List[Clinic]]
+  def isLinked(userId: Long, clinicId: Long): ConnectionIO[Boolean]
 
 object DoctorClinicRepository:
   def make[F[_]](transactor: Transactor[F]): DoctorClinicRepository[F] = new DoctorClinicRepository[F]:
@@ -30,3 +31,11 @@ object DoctorClinicRepository:
             ORDER BY c.name"""
         .query[Clinic]
         .to[List]
+
+    def isLinked(userId: Long, clinicId: Long): ConnectionIO[Boolean] =
+      sql"""SELECT EXISTS (
+              SELECT 1 FROM doctor_clinics
+              WHERE user_id = $userId AND clinic_id = $clinicId
+            )"""
+        .query[Boolean]
+        .unique

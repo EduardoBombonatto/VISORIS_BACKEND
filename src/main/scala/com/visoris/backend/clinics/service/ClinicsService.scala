@@ -3,7 +3,7 @@ package com.visoris.backend.clinics.service
 import cats.effect.Async
 import cats.syntax.all.*
 import com.visoris.backend.clinics.domain.{Clinic, Cnpj}
-import com.visoris.backend.clinics.dto.{CreateClinicRequest, ValidationError}
+import com.visoris.backend.clinics.dto.{ClinicRequest, ValidationError}
 import com.visoris.backend.clinics.repository.{ClinicRepository, DoctorClinicRepository}
 import doobie.ConnectionIO
 import doobie.implicits.*
@@ -14,6 +14,7 @@ sealed trait ClinicsError
 object ClinicsError:
   final case class Validation(errors: List[ValidationError]) extends ClinicsError
   final case class Internal(message: String) extends ClinicsError
+  case object NotFound extends ClinicsError
 
 sealed trait CreateResult
 object CreateResult:
@@ -22,48 +23,47 @@ object CreateResult:
 
 trait ClinicsService[F[_]]:
   def listForDoctor(userId: Long): F[Either[ClinicsError, List[Clinic]]]
-  def createOrReuse(request: CreateClinicRequest, userId: Long): F[Either[ClinicsError, CreateResult]]
+  def createOrReuse(request: ClinicRequest, userId: Long): F[Either[ClinicsError, CreateResult]]
 
 object ClinicsService:
 
+  val MinNameLength = 2
   val MaxNameLength = 255
-  val MaxPhoneLength = 20
   val MaxAddressLength = 500
 
   def validateRequest(
-    request: CreateClinicRequest
+    request: ClinicRequest
   ): Either[List[ValidationError], (String, Option[String], Option[String], Option[String])] =
-    val name = request.name.trim
-    val errors = List(
-      Option.when(name.isEmpty)(ValidationError("name", "Nome da clínica é obrigatório.")),
-      Option.when(name.length > MaxNameLength)(
-        ValidationError("name", s"Nome da clínica deve ter no máximo $MaxNameLength caracteres.")
-      ),
-      request.phone.flatMap(p =>
-        Option.when(p.trim.length > MaxPhoneLength)(
-          ValidationError("phone", s"Telefone deve ter no máximo $MaxPhoneLength caracteres.")
-        )
-      ),
-      request.address.flatMap(a =>
-        Option.when(a.trim.length > MaxAddressLength)(
-          ValidationError("address", s"Endereço deve ter no máximo $MaxAddressLength caracteres.")
-        )
-      ),
-      request.cnpj.flatMap { raw =>
-        Cnpj.validate(raw).left.toOption.map(msg => ValidationError("cnpj", msg))
-      }
-    ).flatten
+    val sanitized = request.sanitized
+    val rawName = sanitized.name
 
-    if errors.nonEmpty then Left(errors)
-    else
-      Right(
-        (
-          name,
-          request.cnpj.map(Cnpj.normalize),
-          request.phone.map(_.trim),
-          request.address.map(_.trim)
-        )
-      )
+    val nameErrors =
+      if rawName.isEmpty then List(ValidationError("name", "Nome da clínica é obrigatório."))
+      else if rawName.length < MinNameLength || rawName.length > MaxNameLength then
+        List(ValidationError("name", s"Nome da clínica deve ter entre $MinNameLength e $MaxNameLength caracteres."))
+      else Nil
+
+    val phoneErrors = request.phone.toList.flatMap { raw =>
+      val digits = raw.filter(_.isDigit)
+      if digits.length < 10 || digits.length > 11 then
+        List(ValidationError("phone", "Telefone deve ter entre 10 e 11 dígitos (DDD + número)."))
+      else Nil
+    }
+
+    val cnpjErrors = request.cnpj.toList.flatMap { raw =>
+      Cnpj.validate(raw).left.toOption.map(msg => ValidationError("cnpj", msg))
+    }
+
+    val addressErrors = request.address.toList.flatMap { raw =>
+      val trimmed = raw.trim
+      if trimmed.length > MaxAddressLength then
+        List(ValidationError("address", s"Endereço deve ter no máximo $MaxAddressLength caracteres."))
+      else Nil
+    }
+
+    val allErrors = nameErrors ++ phoneErrors ++ cnpjErrors ++ addressErrors
+    if allErrors.nonEmpty then Left(allErrors)
+    else Right((sanitized.name, sanitized.cnpj, sanitized.phone, sanitized.address))
 
   def make[F[_]: Async: Logger](
     clinicRepo: ClinicRepository[F],
@@ -75,7 +75,7 @@ object ClinicsService:
       Logger[F].info(s"Listing clinics for doctorId=$userId") *>
         doctorClinicRepo.findByDoctor(userId).transact(transactor).map(Right(_))
 
-    def createOrReuse(request: CreateClinicRequest, userId: Long): F[Either[ClinicsError, CreateResult]] =
+    def createOrReuse(request: ClinicRequest, userId: Long): F[Either[ClinicsError, CreateResult]] =
       validateRequest(request) match
         case Left(errors) =>
           Logger[F].info(s"Clinic create validation failed for doctorId=$userId — ${errors.length} error(s)") *>
@@ -86,6 +86,7 @@ object ClinicsService:
             s"Clinic create/reuse attempt for doctorId=$userId cnpj=${maskCnpj(cnpj)}"
           ) *>
             doCreateOrReuse(name, cnpj, phone, address, userId)
+
 
     private def maskCnpj(cnpj: Option[String]): String =
       cnpj match

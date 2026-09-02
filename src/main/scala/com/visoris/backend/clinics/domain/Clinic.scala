@@ -13,6 +13,10 @@ final case class Clinic(
 )
 
 object Clinic:
+  val MinNameLength = 2
+  val MaxNameLength = 255
+  val MaxAddressLength = 500
+
   def create(
     id: Long,
     name: String,
@@ -24,5 +28,11 @@ object Clinic:
   ): Either[String, Clinic] =
     val trimmed = name.trim
     if trimmed.isEmpty then Left("Nome da clínica é obrigatório.")
-    else if trimmed.length > 255 then Left("Nome da clínica deve ter no máximo 255 caracteres.")
-    else Right(Clinic(id, trimmed, cnpj, phone, address, createdAt, updatedAt))
+    else if trimmed.length < MinNameLength || trimmed.length > MaxNameLength then
+      Left(s"Nome da clínica deve ter entre $MinNameLength e $MaxNameLength caracteres.")
+    else if phone.exists(p => p.length < 10 || p.length > 11) then
+      Left("Telefone da clínica deve ter entre 10 e 11 dígitos.")
+    else if address.exists(_.length > MaxAddressLength) then
+      Left(s"Endereço deve ter no máximo $MaxAddressLength caracteres.")
+    else
+      Right(Clinic(id, trimmed, cnpj, phone, address, createdAt, updatedAt))

@@ -9,6 +9,9 @@ import doobie.util.transactor.Transactor
 
 trait ClinicRepository[F[_]]:
   def findByCnpj(cnpj: String): ConnectionIO[Option[Clinic]]
+
+  def findById(id: Long): ConnectionIO[Option[Clinic]]
+
   def insertClinicIfAbsent(
     name: String,
     cnpj: Option[String],
@@ -25,6 +28,12 @@ object ClinicRepository:
         .query[Clinic]
         .option
 
+    def findById(id: Long): ConnectionIO[Option[Clinic]] =
+      sql"""SELECT id, name, cnpj, phone, address, created_at, updated_at
+            FROM clinics WHERE id = $id"""
+        .query[Clinic]
+        .option
+
     def insertClinicIfAbsent(
       name: String,
       cnpj: Option[String],
@@ -37,3 +46,4 @@ object ClinicRepository:
             RETURNING id, name, cnpj, phone, address, created_at, updated_at"""
         .query[Clinic]
         .option
+

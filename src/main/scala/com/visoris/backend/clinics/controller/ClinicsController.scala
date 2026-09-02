@@ -53,16 +53,18 @@ object ClinicsController:
         }
 
       case req @ POST -> Root / "api" / "v1" / "clinics" as user =>
-        req.req.as[CreateClinicRequest].attempt.flatMap {
+        req.req.as[ClinicRequest].attempt.flatMap {
           case Left(_) =>
             BadRequest(ApiResponse.error("Requisição inválida. Verifique o formato dos dados.", 400).asJson)
               .map(_.withContentType(jsonContent))
-          case Right(createRequest) =>
-            service.createOrReuse(createRequest, user.id).flatMap {
+          case Right(clinicReq) =>
+            service.createOrReuse(clinicReq, user.id).flatMap {
               case Left(ClinicsError.Validation(errors)) =>
                 BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
               case Left(ClinicsError.Internal(msg)) =>
                 InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+              case Left(ClinicsError.NotFound) =>
+                NotFound(ApiResponse.error("Clínica não encontrada.", 404).asJson).map(_.withContentType(jsonContent))
               case Right(CreateResult.Created(clinic)) =>
                 val response = CreateClinicResponse(clinicData(clinic))
                 Created(ApiResponse.success("Clínica criada com sucesso.", response, 201).asJson)
@@ -73,4 +75,5 @@ object ClinicsController:
                   .map(_.withContentType(jsonContent))
             }
         }
+
     }

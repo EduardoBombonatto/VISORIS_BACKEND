@@ -24,3 +24,17 @@ class ClinicSpec extends FunSuite:
   test("accepts a name with exactly 255 characters") {
     assertEquals(Clinic.create(1L, "a" * 255, None, None, None, now, now).map(_.name), Right("a" * 255))
   }
+
+  test("rejects a name shorter than 2 characters") {
+    assert(Clinic.create(1L, "A", None, None, None, now, now).isLeft)
+  }
+
+  test("rejects phone not 10 or 11 characters") {
+    assert(Clinic.create(1L, "Clínica Vida", None, Some("123456789"), None, now, now).isLeft)
+    assert(Clinic.create(1L, "Clínica Vida", None, Some("123456789012"), None, now, now).isLeft)
+  }
+
+  test("accepts phone with 10 or 11 characters") {
+    assert(Clinic.create(1L, "Clínica Vida", None, Some("1234567890"), None, now, now).isRight)
+    assert(Clinic.create(1L, "Clínica Vida", None, Some("12345678901"), None, now, now).isRight)
+  }

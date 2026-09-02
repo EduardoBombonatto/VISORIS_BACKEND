@@ -552,7 +552,6 @@ object OpenApiSpec:
 
   private val clinicsPath: (String, Json) =
     "/api/v1/clinics" -> obj("get" -> clinicsGetOperation, "post" -> clinicsPostOperation)
-
   // Components ------------------------------------------------------------------
 
   private val securitySchemes: Json =
@@ -630,10 +629,10 @@ object OpenApiSpec:
       ),
       "CreateClinicRequest" -> requiredObject(
         List("name"),
-        "name" -> obj("type" -> str("string"), "description" -> str("Nome da clínica (obrigatório, não pode ser vazio).")),
-        "cnpj" -> obj("type" -> str("string"), "nullable" -> bool(true), "description" -> str("CNPJ opcional. Deve ter 14 dígitos com dígitos verificadores válidos (Módulo 11); normalizado para apenas dígitos.")),
-        "phone" -> stringNullableField,
-        "address" -> stringNullableField
+        "name" -> obj("type" -> str("string"), "minLength" -> int(2), "maxLength" -> int(255), "description" -> str("Nome da clínica (obrigatório, mínimo 2, máximo 255 caracteres).")),
+        "cnpj" -> obj("type" -> str("string"), "nullable" -> bool(true), "pattern" -> str("^\\d{14}$"), "description" -> str("CNPJ opcional. Exatamente 14 dígitos com dígitos verificadores válidos (Módulo 11); normalizado para apenas dígitos.")),
+        "phone" -> obj("type" -> str("string"), "nullable" -> bool(true), "pattern" -> str("^\\d{10,11}$"), "description" -> str("Telefone opcional com 10 ou 11 dígitos (DDD + número), normalizado para dígitos puros.")),
+        "address" -> obj("type" -> str("string"), "nullable" -> bool(true), "maxLength" -> int(500), "description" -> str("Endereço opcional, máximo de 500 caracteres."))
       ),
       "ClinicListResponse" -> requiredObject(
         List("clinics"),

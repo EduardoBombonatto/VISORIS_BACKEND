@@ -6,7 +6,7 @@ object Cnpj:
 
   def validate(raw: String): Either[String, String] =
     val digits = normalize(raw)
-    if digits.length != 14 then Left("CNPJ deve conter 14 dígitos.")
+    if digits.length != 14 then Left("CNPJ deve conter exatamente 14 dígitos.")
     else if digits.distinct.length == 1 then Left("CNPJ inválido.")
     else if !validCheckDigits(digits) then Left("CNPJ inválido.")
     else Right(digits)

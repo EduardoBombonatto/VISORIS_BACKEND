@@ -341,3 +341,4 @@ class ClinicsControllerSpec extends CatsEffectSuite:
         assertEquals(reuseStatus, Status.Ok)
     }
   }
+
