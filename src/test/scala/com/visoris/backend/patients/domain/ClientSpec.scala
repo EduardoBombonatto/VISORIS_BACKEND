@@ -10,7 +10,7 @@ class ClientSpec extends FunSuite:
   test("Client.create accepts valid parameters") {
     val result = Client.create(
       id = 100L,
-      clinicId = 200L,
+      userId = 200L,
       fullName = "Carlos Silva",
       documentCpf = Some("12345678909"),
       email = Some("carlos@example.com"),
@@ -21,7 +21,7 @@ class ClientSpec extends FunSuite:
     assert(result.isRight)
     val client = result.toOption.get
     assertEquals(client.id, 100L)
-    assertEquals(client.clinicId, 200L)
+    assertEquals(client.userId, 200L)
     assertEquals(client.fullName, "Carlos Silva")
   }
 

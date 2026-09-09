@@ -3,7 +3,7 @@ package com.visoris.backend.patients.service
 import cats.data.EitherT
 import cats.effect.Async
 import cats.syntax.all.*
-import com.visoris.backend.clinics.repository.DoctorClinicRepository
+
 import com.visoris.backend.patients.domain.Client
 import com.visoris.backend.patients.dto.{ClientRequest, ValidationError}
 import com.visoris.backend.patients.repository.ClientRepository
@@ -21,7 +21,7 @@ object ClientsError:
 
 trait ClientService[F[_]]:
   def create(request: ClientRequest, userId: Long): F[Either[ClientsError, Client]]
-  def listByClinic(clinicId: Long, userId: Long, limit: Long, offset: Long): F[Either[ClientsError, List[Client]]]
+  def listByUser(userId: Long, limit: Long, offset: Long): F[Either[ClientsError, List[Client]]]
 
 object ClientService:
 
@@ -58,17 +58,12 @@ object ClientService:
         List(ValidationError("phone", "Telefone deve ter entre 10 e 11 dígitos (DDD + número)."))
       else Nil
 
-    val clinicErrors =
-      if sanitized.clinicId <= 0 then List(ValidationError("clinic_id", "ID da clínica inválido."))
-      else Nil
-
-    val allErrors = nameErrors ++ cpfErrors ++ emailErrors ++ phoneErrors ++ clinicErrors
+    val allErrors = nameErrors ++ cpfErrors ++ emailErrors ++ phoneErrors
     if allErrors.nonEmpty then Left(allErrors)
     else Right(sanitized)
 
   def make[F[_]: Async: Logger](
     clientRepo: ClientRepository[F],
-    doctorClinicRepo: DoctorClinicRepository[F],
     transactor: Transactor[F]
   ): ClientService[F] = new ClientService[F]:
 
@@ -78,24 +73,22 @@ object ClientService:
           Logger[F].info(s"Client creation validation failed: ${errors.length} error(s)") *>
             Async[F].pure(Left(ClientsError.Validation(errors)))
         case Right(valid) =>
-          Logger[F].info(s"Client create attempt for clinicId=${valid.clinicId} by userId=$userId") *>
+          Logger[F].info(s"Client create attempt by userId=$userId") *>
             createProgram(valid, userId)
               .transact(transactor)
               .flatTap {
                 case Right(client) =>
-                  Logger[F].info(s"Client created id=${client.id} in clinicId=${client.clinicId}")
-                case Left(ClientsError.NotFound) =>
-                  Logger[F].warn(s"Client create rejected (404): clinicId=${valid.clinicId} not linked to userId=$userId")
+                  Logger[F].info(s"Client created id=${client.id} for userId=${client.userId}")
                 case Left(ClientsError.ConflictCpf) =>
-                  Logger[F].warn(s"Client create rejected (409): CPF already exists in clinicId=${valid.clinicId}")
+                  Logger[F].warn(s"Client create rejected (409): CPF already exists for userId=$userId")
                 case Left(ClientsError.Internal(msg)) =>
                   Logger[F].error(s"Client create internal error: $msg")
                 case Left(_) => Async[F].unit
               }
 
-    def listByClinic(clinicId: Long, userId: Long, limit: Long, offset: Long): F[Either[ClientsError, List[Client]]] =
-      Logger[F].info(s"Listing clients for clinicId=$clinicId by userId=$userId") *>
-        listProgram(clinicId, userId, limit, offset)
+    def listByUser(userId: Long, limit: Long, offset: Long): F[Either[ClientsError, List[Client]]] =
+      Logger[F].info(s"Listing clients for userId=$userId") *>
+        listProgram(userId, limit, offset)
           .transact(transactor)
 
     private def createProgram(
@@ -103,13 +96,11 @@ object ClientService:
       userId: Long
     ): ConnectionIO[Either[ClientsError, Client]] =
       val program: EitherT[ConnectionIO, ClientsError, Client] = for
-        isLinked <- EitherT.right(doctorClinicRepo.isLinked(userId, valid.clinicId))
-        _ <- EitherT.cond[ConnectionIO](isLinked, (), ClientsError.NotFound)
-        existing <- EitherT.right(clientRepo.findByClinicIdAndCpf(valid.clinicId, valid.documentCpf))
+        existing <- EitherT.right[ClientsError](clientRepo.findByUserIdAndCpf(userId, valid.documentCpf))
         _ <- EitherT.cond[ConnectionIO](existing.isEmpty, (), ClientsError.ConflictCpf)
-        created <- EitherT.right(
+        created <- EitherT.right[ClientsError](
           clientRepo.insert(
-            clinicId = valid.clinicId,
+            userId = userId,
             fullName = valid.fullName,
             documentCpf = Some(valid.documentCpf),
             email = Some(valid.email),
@@ -121,7 +112,6 @@ object ClientService:
       program.value
 
     private def listProgram(
-      clinicId: Long,
       userId: Long,
       limit: Long,
       offset: Long
@@ -130,9 +120,7 @@ object ClientService:
       val safeOffset = math.max(0L, offset)
 
       val program: EitherT[ConnectionIO, ClientsError, List[Client]] = for
-        isLinked <- EitherT.right(doctorClinicRepo.isLinked(userId, clinicId))
-        _ <- EitherT.cond[ConnectionIO](isLinked, (), ClientsError.NotFound)
-        clients <- EitherT.right(clientRepo.findByClinicId(clinicId, safeLimit, safeOffset))
+        clients <- EitherT.right[ClientsError](clientRepo.findByUserId(userId, safeLimit, safeOffset))
       yield clients
 
       program.value

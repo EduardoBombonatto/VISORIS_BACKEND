@@ -3,7 +3,7 @@ package com.visoris.backend.patients.repository
 import cats.effect.IO
 import cats.effect.Resource
 import cats.effect.Sync
-import com.visoris.backend.clinics.repository.ClinicRepository
+
 import doobie.hikari.HikariTransactor
 import doobie.implicits.*
 import munit.CatsEffectSuite
@@ -32,25 +32,26 @@ class ClientRepositorySpec extends CatsEffectSuite:
 
   private def uniqueCpf: String = f"${math.abs(System.nanoTime) % 100000000000L}%011d"
 
-  test("insert, findById, findByClinicId, findByClinicIdAndCpf work correctly") {
+  test("insert, findById, findByUserId, findByUserIdAndCpf work correctly") {
     transactorResource.use { xa =>
-      val clinicRepo = ClinicRepository.make[IO](xa)
+      val userRepo = com.visoris.backend.iam.repository.UserRepository.make[IO](xa)
       val clientRepo = ClientRepository.make[IO](xa)
       val cpf = uniqueCpf
+      val userId = math.abs(System.nanoTime % 1000000000L)
+      val user = com.visoris.backend.iam.domain.User(userId, s"test-$userId@repo.com", "hash", "Doc", Some("CRM " + userId), java.time.Instant.now())
 
       for
-        clinicOpt <- clinicRepo.insertClinicIfAbsent("Clínica Repo Test", None, None, None).transact(xa)
-        clinic = clinicOpt.get
+        _ <- userRepo.create(user).transact(xa)
         client <- clientRepo.insert(
-          clinicId = clinic.id,
+          userId = userId,
           fullName = "João Silva",
           documentCpf = Some(cpf),
           email = Some("joao@example.com"),
           phone = Some("11999998888")
         ).transact(xa)
         foundById <- clientRepo.findById(client.id).transact(xa)
-        foundByCpf <- clientRepo.findByClinicIdAndCpf(clinic.id, cpf).transact(xa)
-        list <- clientRepo.findByClinicId(clinic.id, 10L, 0L).transact(xa)
+        foundByCpf <- clientRepo.findByUserIdAndCpf(userId, cpf).transact(xa)
+        list <- clientRepo.findByUserId(userId, 10L, 0L).transact(xa)
       yield
         assertEquals(client.fullName, "João Silva")
         assertEquals(foundById.map(_.id), Some(client.id))

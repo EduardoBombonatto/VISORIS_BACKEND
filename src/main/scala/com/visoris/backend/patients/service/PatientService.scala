@@ -3,7 +3,7 @@ package com.visoris.backend.patients.service
 import cats.data.EitherT
 import cats.effect.Async
 import cats.syntax.all.*
-import com.visoris.backend.clinics.repository.DoctorClinicRepository
+
 import com.visoris.backend.patients.domain.{Patient, PatientType}
 import com.visoris.backend.patients.dto.{PatientRequest, ValidationError}
 import com.visoris.backend.patients.repository.{ClientRepository, PatientRepository}
@@ -77,7 +77,6 @@ object PatientService:
   def make[F[_]: Async: Logger](
     patientRepo: PatientRepository[F],
     clientRepo: ClientRepository[F],
-    doctorClinicRepo: DoctorClinicRepository[F],
     transactor: Transactor[F]
   ): PatientService[F] = new PatientService[F]:
 
@@ -94,7 +93,7 @@ object PatientService:
                 case Right(patient) =>
                   Logger[F].info(s"Patient created id=${patient.id} for clientId=${patient.clientId.getOrElse(0L)}")
                 case Left(PatientsError.NotFound) =>
-                  Logger[F].warn(s"Patient create rejected (404): clientId=${valid.clientId} or clinic not linked to userId=$userId")
+                  Logger[F].warn(s"Patient create rejected (404): clientId=${valid.clientId} not linked to userId=$userId")
                 case Left(PatientsError.Internal(msg)) =>
                   Logger[F].error(s"Patient create internal error: $msg")
                 case Left(_) => Async[F].unit
@@ -110,11 +109,10 @@ object PatientService:
       userId: Long
     ): ConnectionIO[Either[PatientsError, Patient]] =
       val program: EitherT[ConnectionIO, PatientsError, Patient] = for
-        clientOpt <- EitherT.right(clientRepo.findById(valid.clientId))
+        clientOpt <- EitherT.right[PatientsError](clientRepo.findById(valid.clientId))
         client <- EitherT.fromOption[ConnectionIO](clientOpt, PatientsError.NotFound)
-        isLinked <- EitherT.right(doctorClinicRepo.isLinked(userId, client.clinicId))
-        _ <- EitherT.cond[ConnectionIO](isLinked, (), PatientsError.NotFound)
-        created <- EitherT.right(
+        _ <- EitherT.cond[ConnectionIO](client.userId == userId, (), PatientsError.NotFound)
+        created <- EitherT.right[PatientsError](
           patientRepo.insert(
             clientId = valid.clientId,
             name = valid.name,
@@ -137,11 +135,10 @@ object PatientService:
       val safeOffset = math.max(0L, offset)
 
       val program: EitherT[ConnectionIO, PatientsError, List[Patient]] = for
-        clientOpt <- EitherT.right(clientRepo.findById(clientId))
+        clientOpt <- EitherT.right[PatientsError](clientRepo.findById(clientId))
         client <- EitherT.fromOption[ConnectionIO](clientOpt, PatientsError.NotFound)
-        isLinked <- EitherT.right(doctorClinicRepo.isLinked(userId, client.clinicId))
-        _ <- EitherT.cond[ConnectionIO](isLinked, (), PatientsError.NotFound)
-        patients <- EitherT.right(patientRepo.findByClientId(clientId, safeLimit, safeOffset))
+        _ <- EitherT.cond[ConnectionIO](client.userId == userId, (), PatientsError.NotFound)
+        patients <- EitherT.right[PatientsError](patientRepo.findByClientId(clientId, safeLimit, safeOffset))
       yield patients
 
       program.value

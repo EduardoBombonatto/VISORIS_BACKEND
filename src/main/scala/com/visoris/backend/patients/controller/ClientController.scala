@@ -30,7 +30,7 @@ object ClientController:
   private def toResponse(client: Client): ClientResponse =
     ClientResponse(
       id = client.id.toString,
-      clinicId = client.clinicId.toString,
+      userId = client.userId.toString,
       fullName = client.fullName,
       documentCpf = client.documentCpf,
       email = client.email,
@@ -42,15 +42,14 @@ object ClientController:
     val dsl = new Http4sDsl[F] {}
     import dsl.*
 
-    object ClinicIdQueryParamMatcher extends QueryParamDecoderMatcher[Long]("clinicId")
     object OptionalLimitQueryParamMatcher extends OptionalQueryParamDecoderMatcher[Long]("limit")
     object OptionalOffsetQueryParamMatcher extends OptionalQueryParamDecoderMatcher[Long]("offset")
 
     AuthedRoutes.of[User, F] {
-      case GET -> Root / "api" / "v1" / "clients" :? ClinicIdQueryParamMatcher(clinicId) +& OptionalLimitQueryParamMatcher(limit) +& OptionalOffsetQueryParamMatcher(offset) as user =>
-        service.listByClinic(clinicId, user.id, limit.getOrElse(50L), offset.getOrElse(0L)).flatMap {
+      case GET -> Root / "api" / "v1" / "clients" :? OptionalLimitQueryParamMatcher(limit) +& OptionalOffsetQueryParamMatcher(offset) as user =>
+        service.listByUser(user.id, limit.getOrElse(50L), offset.getOrElse(0L)).flatMap {
           case Left(ClientsError.NotFound) =>
-            NotFound(ApiResponse.error("Clínica não encontrada.", 404).asJson).map(_.withContentType(jsonContent))
+            NotFound(ApiResponse.error("Usuário não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
           case Left(ClientsError.Internal(msg)) =>
             InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
           case Left(_) =>
@@ -70,9 +69,9 @@ object ClientController:
               case Left(ClientsError.Validation(errors)) =>
                 BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
               case Left(ClientsError.NotFound) =>
-                NotFound(ApiResponse.error("Clínica não encontrada.", 404).asJson).map(_.withContentType(jsonContent))
+                NotFound(ApiResponse.error("Usuário não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
               case Left(ClientsError.ConflictCpf) =>
-                Conflict(ApiResponse.error("Este CPF já está cadastrado nesta clínica.", 409).asJson)
+                Conflict(ApiResponse.error("Este CPF já está cadastrado para este usuário.", 409).asJson)
                   .map(_.withContentType(jsonContent))
               case Left(ClientsError.Internal(msg)) =>
                 InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))

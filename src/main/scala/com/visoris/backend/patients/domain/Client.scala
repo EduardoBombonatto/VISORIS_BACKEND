@@ -4,7 +4,7 @@ import java.time.Instant
 
 final case class Client(
   id: Long,
-  clinicId: Long,
+  userId: Long,
   fullName: String,
   documentCpf: Option[String],
   email: Option[String],
@@ -19,7 +19,7 @@ object Client:
 
   def create(
     id: Long,
-    clinicId: Long,
+    userId: Long,
     fullName: String,
     documentCpf: Option[String],
     email: Option[String],
@@ -42,4 +42,4 @@ object Client:
     else if sanitizedCpf.exists(_.length != 11) then
       Left("CPF deve conter 11 dígitos.")
     else
-      Right(Client(id, clinicId, trimmedName, sanitizedCpf, trimmedEmail, sanitizedPhone, createdAt, updatedAt))
+      Right(Client(id, userId, trimmedName, sanitizedCpf, trimmedEmail, sanitizedPhone, createdAt, updatedAt))

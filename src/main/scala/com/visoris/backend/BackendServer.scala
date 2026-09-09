@@ -83,8 +83,8 @@ object BackendServer:
 
       clientRepo = ClientRepository.make[F](transactor)
       patientRepo = PatientRepository.make[F](transactor)
-      clientService = ClientService.make[F](clientRepo, doctorClinicRepo, transactor)
-      patientService = PatientService.make[F](patientRepo, clientRepo, doctorClinicRepo, transactor)
+      clientService = ClientService.make[F](clientRepo, transactor)
+      patientService = PatientService.make[F](patientRepo, clientRepo, transactor)
       patientsModuleRoutes = authMiddleware(
         ClientController.routes[F](clientService) <+> PatientController.routes[F](patientService)
       )

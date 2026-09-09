@@ -2,8 +2,7 @@ package com.visoris.backend.patients.service
 
 import cats.effect.IO
 import cats.syntax.all.*
-import com.visoris.backend.clinics.domain.Clinic
-import com.visoris.backend.clinics.repository.DoctorClinicRepository
+
 import com.visoris.backend.patients.domain.{Client, Patient, PatientType}
 import com.visoris.backend.patients.dto.PatientRequest
 import com.visoris.backend.patients.repository.{ClientRepository, PatientRepository}
@@ -29,7 +28,7 @@ class PatientServiceSpec extends CatsEffectSuite:
   private val now = Instant.now()
   private val sampleClient = Client(
     id = 20L,
-    clinicId = 10L,
+    userId = 1L,
     fullName = "Maria Souza",
     documentCpf = Some("12345678909"),
     email = Some("maria@example.com"),
@@ -48,19 +47,13 @@ class PatientServiceSpec extends CatsEffectSuite:
     createdAt = now
   )
 
-  private def mockDoctorClinicRepo(isLinkedResult: Boolean): DoctorClinicRepository[IO] =
-    new DoctorClinicRepository[IO]:
-      def insert(userId: Long, clinicId: Long): ConnectionIO[Unit] = ().pure[ConnectionIO]
-      def findByDoctor(userId: Long): ConnectionIO[List[Clinic]] = List.empty.pure[ConnectionIO]
-      def isLinked(userId: Long, clinicId: Long): ConnectionIO[Boolean] = isLinkedResult.pure[ConnectionIO]
-
   private def mockClientRepo(clientOpt: Option[Client] = Some(sampleClient)): ClientRepository[IO] =
     new ClientRepository[IO]:
-      def insert(clinicId: Long, fullName: String, documentCpf: Option[String], email: Option[String], phone: Option[String]): ConnectionIO[Client] =
+      def insert(userId: Long, fullName: String, documentCpf: Option[String], email: Option[String], phone: Option[String]): ConnectionIO[Client] =
         sampleClient.pure[ConnectionIO]
       def findById(id: Long): ConnectionIO[Option[Client]] = clientOpt.pure[ConnectionIO]
-      def findByClinicId(clinicId: Long, limit: Long, offset: Long): ConnectionIO[List[Client]] = List(sampleClient).pure[ConnectionIO]
-      def findByClinicIdAndCpf(clinicId: Long, documentCpf: String): ConnectionIO[Option[Client]] = None.pure[ConnectionIO]
+      def findByUserId(userId: Long, limit: Long, offset: Long): ConnectionIO[List[Client]] = List(sampleClient).pure[ConnectionIO]
+      def findByUserIdAndCpf(userId: Long, documentCpf: String): ConnectionIO[Option[Client]] = None.pure[ConnectionIO]
 
   private def mockPatientRepo(
     patient: Patient = samplePatient,
@@ -72,14 +65,19 @@ class PatientServiceSpec extends CatsEffectSuite:
       def findById(id: Long): ConnectionIO[Option[Patient]] = Some(patient).pure[ConnectionIO]
       def findByClientId(clientId: Long, limit: Long, offset: Long): ConnectionIO[List[Patient]] = list.pure[ConnectionIO]
 
+  private val validRequest = PatientRequest(
+    clientId = 20L,
+    name = "Rex",
+    patientType = Right(PatientType.PET),
+    birthDate = Some(LocalDate.of(2022, 1, 1)),
+    biologicalDetails = Json.obj()
+  )
+
   test("create returns Validation error when name is empty or birthDate is future") {
-    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), mockDoctorClinicRepo(true), xa)
-    val req = PatientRequest(
-      clientId = 20L,
+    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), xa)
+    val req = validRequest.copy(
       name = "",
-      patientType = Right(PatientType.PET),
-      birthDate = Some(LocalDate.now().plusDays(10)),
-      biologicalDetails = Json.obj()
+      birthDate = Some(LocalDate.now().plusDays(10))
     )
 
     service.create(req, userId = 1L).map {
@@ -90,42 +88,37 @@ class PatientServiceSpec extends CatsEffectSuite:
     }
   }
 
-  test("create returns NotFound (404) when client does not exist") {
-    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(clientOpt = None), mockDoctorClinicRepo(true), xa)
-    val req = PatientRequest(20L, "Rex", Right(PatientType.PET), Some(LocalDate.of(2022, 1, 1)), Json.obj())
-
-    service.create(req, userId = 1L).map { res =>
+  test("create returns NotFound if client does not exist") {
+    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(clientOpt = None), xa)
+    service.create(validRequest, userId = 1L).map { res =>
       assertEquals(res, Left(PatientsError.NotFound))
     }
   }
 
-  test("create returns NotFound (404) when client's clinic is not linked to doctor") {
-    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), mockDoctorClinicRepo(false), xa)
-    val req = PatientRequest(20L, "Rex", Right(PatientType.PET), Some(LocalDate.of(2022, 1, 1)), Json.obj())
-
-    service.create(req, userId = 1L).map { res =>
+  test("create returns NotFound if client is not linked to user") {
+    val unlinkedClient = sampleClient.copy(userId = 999L)
+    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(clientOpt = Some(unlinkedClient)), xa)
+    service.create(validRequest, userId = 1L).map { res =>
       assertEquals(res, Left(PatientsError.NotFound))
     }
   }
 
   test("create returns Patient on success") {
-    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), mockDoctorClinicRepo(true), xa)
-    val req = PatientRequest(20L, "Rex", Right(PatientType.PET), Some(LocalDate.of(2022, 5, 10)), Json.obj())
-
-    service.create(req, userId = 1L).map { res =>
+    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), xa)
+    service.create(validRequest, userId = 1L).map { res =>
       assertEquals(res, Right(samplePatient))
     }
   }
 
-  test("listByClient returns NotFound (404) when client does not exist or clinic unlinked") {
-    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(clientOpt = None), mockDoctorClinicRepo(true), xa)
+  test("listByClient returns NotFound (404) when client does not exist or unlinked") {
+    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(clientOpt = None), xa)
     service.listByClient(20L, userId = 1L, limit = 50L, offset = 0L).map { res =>
       assertEquals(res, Left(PatientsError.NotFound))
     }
   }
 
   test("listByClient returns patients list on success") {
-    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), mockDoctorClinicRepo(true), xa)
+    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), xa)
     service.listByClient(20L, userId = 1L, limit = 50L, offset = 0L).map { res =>
       assertEquals(res, Right(List(samplePatient)))
     }

@@ -11,7 +11,6 @@ object ValidationError:
   given Decoder[ValidationError] = deriveDecoder
 
 final case class ClientRequest(
-  clinicId: Long,
   fullName: String,
   documentCpf: String,
   email: String,
@@ -19,7 +18,6 @@ final case class ClientRequest(
 ):
   def sanitized: ClientRequest =
     ClientRequest(
-      clinicId = clinicId,
       fullName = fullName.trim,
       documentCpf = documentCpf.filter(_.isDigit),
       email = email.trim,
@@ -29,12 +27,11 @@ final case class ClientRequest(
 object ClientRequest:
   given Decoder[ClientRequest] = Decoder.instance { cursor =>
     for
-      clinicId <- cursor.downField("clinic_id").as[Long].orElse(cursor.downField("clinicId").as[Long])
       fullName <- cursor.downField("full_name").as[String].orElse(cursor.downField("fullName").as[String]).orElse(Right(""))
       documentCpf <- cursor.downField("document_cpf").as[String].orElse(cursor.downField("documentCpf").as[String]).orElse(Right(""))
       email <- cursor.downField("email").as[String].orElse(Right(""))
       phone <- cursor.downField("phone").as[String].orElse(Right(""))
-    yield ClientRequest(clinicId, fullName, documentCpf, email, phone)
+    yield ClientRequest(fullName, documentCpf, email, phone)
   }
 
 final case class CreateClientResponse(
@@ -46,7 +43,7 @@ object CreateClientResponse:
 
 final case class ClientResponse(
   id: String,
-  clinicId: String,
+  userId: String,
   fullName: String,
   documentCpf: Option[String],
   email: Option[String],

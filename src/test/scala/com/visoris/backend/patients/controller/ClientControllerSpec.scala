@@ -26,7 +26,7 @@ class ClientControllerSpec extends CatsEffectSuite:
 
   private val sampleClient = Client(
     id = 500L,
-    clinicId = 10L,
+    userId = 100L,
     fullName = "Maria Souza",
     documentCpf = Some("12345678909"),
     email = Some("maria@example.com"),
@@ -40,14 +40,13 @@ class ClientControllerSpec extends CatsEffectSuite:
     listResult: Either[ClientsError, List[Client]] = Right(List(sampleClient))
   ): ClientService[IO] = new ClientService[IO]:
     def create(request: ClientRequest, userId: Long): IO[Either[ClientsError, Client]] = IO.pure(createResult)
-    def listByClinic(clinicId: Long, userId: Long, limit: Long, offset: Long): IO[Either[ClientsError, List[Client]]] = IO.pure(listResult)
+    def listByUser(userId: Long, limit: Long, offset: Long): IO[Either[ClientsError, List[Client]]] = IO.pure(listResult)
 
   test("POST /api/v1/clients returns 201 Created on valid input") {
     val service = mockService()
     val routes = ClientController.routes[IO](service)
 
     val body = Json.obj(
-      "clinic_id" -> Json.fromLong(10L),
       "full_name" -> Json.fromString("Maria Souza"),
       "document_cpf" -> Json.fromString("12345678909"),
       "email" -> Json.fromString("maria@example.com"),
@@ -66,12 +65,11 @@ class ClientControllerSpec extends CatsEffectSuite:
     }
   }
 
-  test("POST /api/v1/clients returns 404 when clinic not found or not owned") {
+  test("POST /api/v1/clients returns 404 when user not found") {
     val service = mockService(createResult = Left(ClientsError.NotFound))
     val routes = ClientController.routes[IO](service)
 
     val body = Json.obj(
-      "clinic_id" -> Json.fromLong(10L),
       "full_name" -> Json.fromString("Maria Souza"),
       "document_cpf" -> Json.fromString("12345678909"),
       "email" -> Json.fromString("maria@example.com"),
@@ -85,12 +83,11 @@ class ClientControllerSpec extends CatsEffectSuite:
     }
   }
 
-  test("POST /api/v1/clients returns 409 when CPF already exists in clinic") {
+  test("POST /api/v1/clients returns 409 when CPF already exists for user") {
     val service = mockService(createResult = Left(ClientsError.ConflictCpf))
     val routes = ClientController.routes[IO](service)
 
     val body = Json.obj(
-      "clinic_id" -> Json.fromLong(10L),
       "full_name" -> Json.fromString("Maria Souza"),
       "document_cpf" -> Json.fromString("12345678909"),
       "email" -> Json.fromString("maria@example.com"),
@@ -109,7 +106,6 @@ class ClientControllerSpec extends CatsEffectSuite:
     val routes = ClientController.routes[IO](service)
 
     val body = Json.obj(
-      "clinic_id" -> Json.fromLong(10L),
       "full_name" -> Json.fromString(""),
       "document_cpf" -> Json.fromString("12345678909"),
       "email" -> Json.fromString("maria@example.com"),
@@ -127,7 +123,7 @@ class ClientControllerSpec extends CatsEffectSuite:
     val service = mockService()
     val routes = ClientController.routes[IO](service)
 
-    val req = Request[IO](Method.GET, uri"/api/v1/clients?clinicId=10&limit=10&offset=0")
+    val req = Request[IO](Method.GET, uri"/api/v1/clients?limit=10&offset=0")
 
     routes.run(ContextRequest(testUser, req)).value.flatMap {
       case Some(resp) =>
@@ -141,11 +137,11 @@ class ClientControllerSpec extends CatsEffectSuite:
     }
   }
 
-  test("GET /api/v1/clients returns 404 when clinic not found or not owned") {
+  test("GET /api/v1/clients returns 404 when user not found") {
     val service = mockService(listResult = Left(ClientsError.NotFound))
     val routes = ClientController.routes[IO](service)
 
-    val req = Request[IO](Method.GET, uri"/api/v1/clients?clinicId=10")
+    val req = Request[IO](Method.GET, uri"/api/v1/clients")
 
     routes.run(ContextRequest(testUser, req)).value.map {
       case Some(resp) => assertEquals(resp.status, Status.NotFound)

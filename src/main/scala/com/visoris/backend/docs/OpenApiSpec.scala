@@ -574,7 +574,7 @@ object OpenApiSpec:
         "clients" -> Json.arr(
           obj(
             "id" -> str("8712345678901239999"),
-            "clinicId" -> str("8712345678901234567"),
+            "userId" -> str("8712345678901234567"),
             "fullName" -> str("Carlos Silva"),
             "documentCpf" -> str("12345678909"),
             "email" -> str("carlos@example.com"),
@@ -590,19 +590,18 @@ object OpenApiSpec:
   private val clientsGetOperation: Json =
     obj(
       "tags" -> Json.arr(str(clientsTag)),
-      "summary" -> str("Lista os tutores/clientes vinculados a uma clínica."),
-      "description" -> str("Retorna a lista paginada de tutores da clínica informada. Requer que a clínica pertença ao médico autenticado."),
+      "summary" -> str("Lista os tutores/clientes vinculados ao usuário logado."),
+      "description" -> str("Retorna a lista paginada de tutores do usuário autenticado."),
       "operationId" -> str("clientsList"),
       "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
       "parameters" -> Json.arr(
-        obj("name" -> str("clinicId"), "in" -> str("query"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID da clínica.")),
         obj("name" -> str("limit"), "in" -> str("query"), "required" -> bool(false), "schema" -> obj("type" -> str("integer"), "default" -> int(50))),
         obj("name" -> str("offset"), "in" -> str("query"), "required" -> bool(false), "schema" -> obj("type" -> str("integer"), "default" -> int(0)))
       ),
       "responses" -> obj(
         "200" -> jsonResponseWithExample("Clientes listados com sucesso.", successEnvelope("ClientListResponse"), clientsListSuccessExample),
         "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
-        "404" -> errorResponse("Clínica não encontrada.", genericErrorExample("Clínica não encontrada.", 404)),
+        "404" -> errorResponse("Usuário não encontrado.", genericErrorExample("Usuário não encontrado.", 404)),
         "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
       )
     )
@@ -610,7 +609,7 @@ object OpenApiSpec:
   private val clientsPostOperation: Json =
     obj(
       "tags" -> Json.arr(str(clientsTag)),
-      "summary" -> str("Cadastra um novo tutor/cliente vinculado a uma clínica."),
+      "summary" -> str("Cadastra um novo tutor/cliente vinculado ao usuário logado."),
       "description" -> str("Cadastra o cliente e retorna o ID gerado."),
       "operationId" -> str("clientsCreate"),
       "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
@@ -622,8 +621,8 @@ object OpenApiSpec:
         "201" -> jsonResponseWithExample("Cliente cadastrado com sucesso.", successEnvelope("CreateClientResponse"), createClientSuccessExample),
         "400" -> validationResponse("Requisição inválida ou campos obrigatórios ausentes.", List("dados-invalidos" -> validationExample(List("full_name" -> "Nome do tutor é obrigatório.")))),
         "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
-        "404" -> errorResponse("Clínica não encontrada.", genericErrorExample("Clínica não encontrada.", 404)),
-        "409" -> errorResponse("Conflito de CPF.", genericErrorExample("Este CPF já está cadastrado nesta clínica.", 409)),
+        "404" -> errorResponse("Usuário não encontrado.", genericErrorExample("Usuário não encontrado.", 404)),
+        "409" -> errorResponse("Conflito de CPF.", genericErrorExample("Este CPF já está cadastrado para este usuário.", 409)),
         "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
       )
     )
@@ -807,8 +806,7 @@ object OpenApiSpec:
         "clinic" -> ref("ClinicData")
       ),
       "ClientRequest" -> requiredObject(
-        List("clinic_id", "full_name", "document_cpf", "email", "phone"),
-        "clinic_id" -> obj("type" -> str("integer"), "description" -> str("ID da clínica vinculada (Snowflake).")),
+        List("full_name", "document_cpf", "email", "phone"),
         "full_name" -> obj("type" -> str("string"), "description" -> str("Nome completo do tutor.")),
         "document_cpf" -> obj("type" -> str("string"), "description" -> str("CPF do tutor (11 dígitos).")),
         "email" -> obj("type" -> str("string"), "description" -> str("E-mail do tutor.")),
@@ -819,9 +817,9 @@ object OpenApiSpec:
         "id" -> obj("type" -> str("string"), "description" -> str("ID do cliente gerado (Snowflake)."))
       ),
       "ClientResponse" -> requiredObject(
-        List("id", "clinicId", "fullName", "createdAt"),
+        List("id", "userId", "fullName", "createdAt"),
         "id" -> obj("type" -> str("string"), "description" -> str("ID do cliente (Snowflake).")),
-        "clinicId" -> obj("type" -> str("string"), "description" -> str("ID da clínica vinculada.")),
+        "userId" -> obj("type" -> str("string"), "description" -> str("ID do usuário logado.")),
         "fullName" -> stringField,
         "documentCpf" -> stringNullableField,
         "email" -> stringNullableField,

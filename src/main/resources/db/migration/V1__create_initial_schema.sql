@@ -105,6 +105,8 @@ CREATE TABLE clinics
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX uq_clinics_cnpj ON clinics (cnpj) WHERE cnpj IS NOT NULL;
+
 -- Tabela de Junção (um médico pode atender em várias clínicas, e uma clínica pode ter vários médicos)
 CREATE TABLE doctor_clinics
 (
@@ -127,7 +129,7 @@ ON TABLE doctor_clinics IS 'Permite que um vet atenda em várias clínicas, e um
 CREATE TABLE clients
 (
     id         BIGINT PRIMARY KEY       DEFAULT next_id(),
-    clinic_id  BIGINT       NOT NULL REFERENCES clinics (id) ON DELETE CASCADE,
+    user_id    BIGINT       NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     full_name  VARCHAR(255) NOT NULL,
     document_cpf VARCHAR(20),
     email      VARCHAR(255),
@@ -136,7 +138,8 @@ CREATE TABLE clients
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_clients_clinic ON clients (clinic_id);
+CREATE INDEX idx_clients_user ON clients (user_id);
+CREATE UNIQUE INDEX uq_clients_user_cpf ON clients (user_id, document_cpf) WHERE document_cpf IS NOT NULL;
 
 -- A Entidade Biológica (Padrão ‘Single’ Table Inheritance via JSONB)
 CREATE TABLE patients
