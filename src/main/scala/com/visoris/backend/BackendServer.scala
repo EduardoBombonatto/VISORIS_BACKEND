@@ -11,6 +11,9 @@ import com.visoris.backend.docs.DocsController
 import com.visoris.backend.iam.controller.AuthController
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.iam.service.{AuthService, RegistrationService}
+import com.visoris.backend.patients.controller.{ClientController, PatientController}
+import com.visoris.backend.patients.repository.{ClientRepository, PatientRepository}
+import com.visoris.backend.patients.service.{ClientService, PatientService}
 import com.visoris.backend.shared.auth.{AuthMiddleware, TokenService}
 import com.visoris.backend.shared.dto.ApiResponse
 import fs2.io.net.Network
@@ -78,9 +81,17 @@ object BackendServer:
       clinicsService = ClinicsService.make[F](clinicRepo, doctorClinicRepo, transactor)
       clinicsRoutes = authMiddleware(ClinicsController.routes[F](clinicsService))
 
+      clientRepo = ClientRepository.make[F](transactor)
+      patientRepo = PatientRepository.make[F](transactor)
+      clientService = ClientService.make[F](clientRepo, doctorClinicRepo, transactor)
+      patientService = PatientService.make[F](patientRepo, clientRepo, doctorClinicRepo, transactor)
+      patientsModuleRoutes = authMiddleware(
+        ClientController.routes[F](clientService) <+> PatientController.routes[F](patientService)
+      )
+
       authRoutes = AuthController.routes[F](registrationService, authService)
       docsRoutes = DocsController.routes[F]
-      httpApp = corsConfig(errorHandler((authRoutes <+> docsRoutes <+> clinicsRoutes).orNotFound))
+      httpApp = corsConfig(errorHandler((authRoutes <+> docsRoutes <+> clinicsRoutes <+> patientsModuleRoutes).orNotFound))
 
       _ <-
         EmberServerBuilder.default[F]

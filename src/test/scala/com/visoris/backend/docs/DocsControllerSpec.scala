@@ -37,7 +37,7 @@ class DocsControllerSpec extends CatsEffectSuite:
         paths,
         Set(
           "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/register", "/api/v1/auth/me",
-          "/api/v1/auth/logout", "/api/v1/clinics"
+          "/api/v1/auth/logout", "/api/v1/clinics", "/api/v1/clients", "/api/v1/patients"
         )
       )
   }
@@ -115,7 +115,9 @@ class DocsControllerSpec extends CatsEffectSuite:
           "LoginRequest", "RegisterRequest",
           "UserData", "LoginResponse", "RegisterResponse",
           "RefreshResponse", "ValidationError",
-          "ClinicData", "CreateClinicRequest", "ClinicListResponse", "CreateClinicResponse"
+          "ClinicData", "CreateClinicRequest", "ClinicListResponse", "CreateClinicResponse",
+          "ClientRequest", "ClientResponse", "CreateClientResponse", "ClientListResponse",
+          "PatientRequest", "PatientResponse", "CreatePatientResponse", "PatientListResponse"
         )
       )
   }
