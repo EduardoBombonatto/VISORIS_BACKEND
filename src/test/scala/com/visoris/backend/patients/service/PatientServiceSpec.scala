@@ -54,23 +54,35 @@ class PatientServiceSpec extends CatsEffectSuite:
       def findById(id: Long): ConnectionIO[Option[Client]] = clientOpt.pure[ConnectionIO]
       def findByUserId(userId: Long, limit: Long, offset: Long): ConnectionIO[List[Client]] = List(sampleClient).pure[ConnectionIO]
       def findByUserIdAndCpf(userId: Long, documentCpf: String): ConnectionIO[Option[Client]] = None.pure[ConnectionIO]
+      def findConflicts(userId: Long, documentCpf: String, email: String, phone: String): ConnectionIO[List[Client]] = Nil.pure[ConnectionIO]
+      def findConflictsExcluding(id: Long, userId: Long, documentCpf: String, email: String, phone: String): ConnectionIO[List[Client]] = Nil.pure[ConnectionIO]
+      def update(id: Long, userId: Long, fullName: String, documentCpf: Option[String], email: Option[String], phone: Option[String]): ConnectionIO[Option[Client]] = Some(sampleClient).pure[ConnectionIO]
+      def delete(id: Long, userId: Long): ConnectionIO[Int] = 1.pure[ConnectionIO]
+      def hasPatients(clientId: Long): ConnectionIO[Boolean] = false.pure[ConnectionIO]
 
   private def mockPatientRepo(
     patient: Patient = samplePatient,
-    list: List[Patient] = List(samplePatient)
+    list: List[Patient] = List(samplePatient),
+    ownerUserId: Option[Long] = Some(1L),
+    hasAppointmentsResult: Boolean = false
   ): PatientRepository[IO] =
     new PatientRepository[IO]:
       def insert(clientId: Long, name: String, patientType: PatientType, birthDate: Option[LocalDate], biologicalDetails: Json): ConnectionIO[Patient] =
         patient.pure[ConnectionIO]
       def findById(id: Long): ConnectionIO[Option[Patient]] = Some(patient).pure[ConnectionIO]
       def findByClientId(clientId: Long, limit: Long, offset: Long): ConnectionIO[List[Patient]] = list.pure[ConnectionIO]
+      def update(id: Long, name: String, patientType: PatientType, birthDate: Option[LocalDate], biologicalDetails: Json): ConnectionIO[Option[Patient]] =
+        Some(patient.copy(name = name)).pure[ConnectionIO]
+      def delete(id: Long): ConnectionIO[Int] = 1.pure[ConnectionIO]
+      def hasAppointments(patientId: Long): ConnectionIO[Boolean] = hasAppointmentsResult.pure[ConnectionIO]
+      def findOwnerUserId(patientId: Long): ConnectionIO[Option[Long]] = ownerUserId.pure[ConnectionIO]
 
   private val validRequest = PatientRequest(
     clientId = 20L,
     name = "Rex",
     patientType = Right(PatientType.PET),
     birthDate = Some(LocalDate.of(2022, 1, 1)),
-    biologicalDetails = Json.obj()
+    biologicalDetails = Json.obj("breed" -> Json.fromString("Golden"), "coat_color" -> Json.fromString("Dourado"))
   )
 
   test("create returns Validation error when name is empty or birthDate is future") {
@@ -85,6 +97,46 @@ class PatientServiceSpec extends CatsEffectSuite:
         assert(errors.exists(_.field == "name"))
         assert(errors.exists(_.field == "birth_date"))
       case other => fail(s"Expected validation errors, got $other")
+    }
+  }
+
+  test("create returns Validation error for PET when breed or coat_color is missing") {
+    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), xa)
+    val req = validRequest.copy(
+      biologicalDetails = Json.obj()
+    )
+
+    service.create(req, userId = 1L).map {
+      case Left(PatientsError.Validation(errors)) =>
+        assert(errors.exists(_.field == "breed"))
+        assert(errors.exists(_.field == "coat_color"))
+      case other => fail(s"Expected validation errors, got $other")
+    }
+  }
+
+  test("create returns Validation error for PET when both birthDate and age are missing") {
+    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), xa)
+    val req = validRequest.copy(
+      birthDate = None,
+      biologicalDetails = Json.obj("breed" -> Json.fromString("SRD"), "coat_color" -> Json.fromString("Preto"))
+    )
+
+    service.create(req, userId = 1L).map {
+      case Left(PatientsError.Validation(errors)) =>
+        assert(errors.exists(_.field == "birth_date"))
+      case other => fail(s"Expected validation errors, got $other")
+    }
+  }
+
+  test("create succeeds for PET when birthDate is missing but age is provided in biologicalDetails") {
+    val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), xa)
+    val req = validRequest.copy(
+      birthDate = None,
+      biologicalDetails = Json.obj("age" -> Json.fromString("3 anos"), "breed" -> Json.fromString("SRD"), "coat_color" -> Json.fromString("Caramelo"))
+    )
+
+    service.create(req, userId = 1L).map { res =>
+      assertEquals(res, Right(samplePatient))
     }
   }
 
@@ -121,5 +173,57 @@ class PatientServiceSpec extends CatsEffectSuite:
     val service = PatientService.make[IO](mockPatientRepo(), mockClientRepo(), xa)
     service.listByClient(20L, userId = 1L, limit = 50L, offset = 0L).map { res =>
       assertEquals(res, Right(List(samplePatient)))
+    }
+  }
+
+  test("update returns NotFound (404) when patient not owned by user") {
+    val service = PatientService.make[IO](mockPatientRepo(ownerUserId = Some(999L)), mockClientRepo(), xa)
+    val req = com.visoris.backend.patients.dto.UpdatePatientRequest(
+      name = "Rex",
+      patientType = Right(PatientType.PET),
+      birthDate = Some(LocalDate.of(2022, 1, 1)),
+      biologicalDetails = Json.obj("breed" -> Json.fromString("Poodle"), "coat_color" -> Json.fromString("Branco"))
+    )
+
+    service.update(patientId = 800L, req, userId = 1L).map { res =>
+      assertEquals(res, Left(PatientsError.NotFound))
+    }
+  }
+
+  test("update returns Patient on success") {
+    val service = PatientService.make[IO](mockPatientRepo(ownerUserId = Some(1L)), mockClientRepo(), xa)
+    val req = com.visoris.backend.patients.dto.UpdatePatientRequest(
+      name = "Rex Atualizado",
+      patientType = Right(PatientType.PET),
+      birthDate = Some(LocalDate.of(2022, 1, 1)),
+      biologicalDetails = Json.obj("breed" -> Json.fromString("Poodle"), "coat_color" -> Json.fromString("Branco"))
+    )
+
+    service.update(patientId = 800L, req, userId = 1L).map { res =>
+      assertEquals(res, Right(samplePatient.copy(name = "Rex Atualizado")))
+    }
+  }
+
+  test("delete succeeds even when patient has appointments (cascade)") {
+    val service = PatientService.make[IO](mockPatientRepo(ownerUserId = Some(1L), hasAppointmentsResult = true), mockClientRepo(), xa)
+
+    service.delete(patientId = 800L, userId = 1L).map { res =>
+      assertEquals(res, Right(()))
+    }
+  }
+
+  test("delete returns NotFound (404) when patient not owned") {
+    val service = PatientService.make[IO](mockPatientRepo(ownerUserId = None), mockClientRepo(), xa)
+
+    service.delete(patientId = 999L, userId = 1L).map { res =>
+      assertEquals(res, Left(PatientsError.NotFound))
+    }
+  }
+
+  test("delete returns Unit on success") {
+    val service = PatientService.make[IO](mockPatientRepo(ownerUserId = Some(1L), hasAppointmentsResult = false), mockClientRepo(), xa)
+
+    service.delete(patientId = 800L, userId = 1L).map { res =>
+      assertEquals(res, Right(()))
     }
   }

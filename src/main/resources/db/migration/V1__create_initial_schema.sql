@@ -140,12 +140,14 @@ CREATE TABLE clients
 
 CREATE INDEX idx_clients_user ON clients (user_id);
 CREATE UNIQUE INDEX uq_clients_user_cpf ON clients (user_id, document_cpf) WHERE document_cpf IS NOT NULL;
+CREATE UNIQUE INDEX uq_clients_user_email ON clients (user_id, email) WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX uq_clients_user_phone ON clients (user_id, phone) WHERE phone IS NOT NULL;
 
 -- A Entidade Biológica (Padrão ‘Single’ Table Inheritance via JSONB)
 CREATE TABLE patients
 (
     id                 BIGINT PRIMARY KEY         DEFAULT next_id(),
-    client_id          BIGINT REFERENCES clients (id) ON DELETE RESTRICT,
+    client_id          BIGINT REFERENCES clients (id) ON DELETE CASCADE,
     name               VARCHAR(255)      NOT NULL,
     patient_type       patient_type_enum NOT NULL,
     birth_date         DATE,
@@ -165,7 +167,7 @@ CREATE TABLE appointments
     id             BIGINT PRIMARY KEY                DEFAULT next_id(),
     user_id        BIGINT REFERENCES users (id) ON DELETE CASCADE,
     clinic_id      BIGINT REFERENCES clinics (id) ON DELETE RESTRICT,
-    patient_id     BIGINT REFERENCES patients (id) ON DELETE RESTRICT,
+    patient_id     BIGINT REFERENCES patients (id) ON DELETE CASCADE,
 
     scheduled_at   TIMESTAMP WITH TIME ZONE NOT NULL,
     procedure_name VARCHAR(255)             NOT NULL,
@@ -204,7 +206,7 @@ CREATE TABLE templates
 CREATE TABLE reports
 (
     id                       BIGINT PRIMARY KEY       DEFAULT next_id(),
-    appointment_id           BIGINT UNIQUE REFERENCES appointments (id) ON DELETE RESTRICT,
+    appointment_id           BIGINT UNIQUE REFERENCES appointments (id) ON DELETE CASCADE,
     user_id                  BIGINT REFERENCES users (id) ON DELETE CASCADE,
     attendance_location_name VARCHAR(255),
     patient_snapshot         JSONB,

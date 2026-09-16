@@ -73,10 +73,49 @@ object PatientController:
                 NotFound(ApiResponse.error("Cliente não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
               case Left(PatientsError.Internal(msg)) =>
                 InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+              case Left(_) =>
+                BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
               case Right(patient) =>
                 val response = CreatePatientResponse(toResponse(patient))
                 Created(ApiResponse.success("Paciente cadastrado com sucesso.", response, 201).asJson)
                   .map(_.withContentType(jsonContent))
             }
+        }
+
+      case req @ PUT -> Root / "api" / "v1" / "patients" / LongVar(patientId) as user =>
+        req.req.as[UpdatePatientRequest].attempt.flatMap {
+          case Left(_) =>
+            BadRequest(ApiResponse.error("Requisição inválida. Verifique o formato dos dados.", 400).asJson)
+              .map(_.withContentType(jsonContent))
+          case Right(patientReq) =>
+            service.update(patientId, patientReq, user.id).flatMap {
+              case Left(PatientsError.Validation(errors)) =>
+                BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
+              case Left(PatientsError.NotFound) =>
+                NotFound(ApiResponse.error("Paciente não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
+              case Left(PatientsError.Internal(msg)) =>
+                InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+              case Left(_) =>
+                BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
+              case Right(patient) =>
+                Ok(ApiResponse.success("Paciente atualizado com sucesso.", toResponse(patient), 200).asJson)
+                  .map(_.withContentType(jsonContent))
+            }
+        }
+
+      case DELETE -> Root / "api" / "v1" / "patients" / LongVar(patientId) as user =>
+        service.delete(patientId, user.id).flatMap {
+          case Left(PatientsError.NotFound) =>
+            NotFound(ApiResponse.error("Paciente não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
+          case Left(PatientsError.ConflictAppointments) =>
+            Conflict(ApiResponse.error("Não é possível excluir o paciente pois existem consultas vinculadas.", 409).asJson)
+              .map(_.withContentType(jsonContent))
+          case Left(PatientsError.Internal(msg)) =>
+            InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+          case Left(_) =>
+            BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
+          case Right(_) =>
+            Ok(ApiResponse.success("Paciente excluído com sucesso.", Option.empty[String], 200).asJson)
+              .map(_.withContentType(jsonContent))
         }
     }

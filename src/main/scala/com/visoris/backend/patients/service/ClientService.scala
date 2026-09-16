@@ -17,11 +17,16 @@ object ClientsError:
   final case class Validation(errors: List[ValidationError]) extends ClientsError
   case object NotFound extends ClientsError
   case object ConflictCpf extends ClientsError
+  case object ConflictEmail extends ClientsError
+  case object ConflictPhone extends ClientsError
+  case object ConflictPatients extends ClientsError
   final case class Internal(message: String) extends ClientsError
 
 trait ClientService[F[_]]:
   def create(request: ClientRequest, userId: Long): F[Either[ClientsError, Client]]
   def listByUser(userId: Long, limit: Long, offset: Long): F[Either[ClientsError, List[Client]]]
+  def update(clientId: Long, request: ClientRequest, userId: Long): F[Either[ClientsError, Client]]
+  def delete(clientId: Long, userId: Long): F[Either[ClientsError, Unit]]
 
 object ClientService:
 
@@ -50,6 +55,8 @@ object ClientService:
       if sanitized.email.isEmpty then List(ValidationError("email", "E-mail é obrigatório."))
       else if !sanitized.email.contains("@") || !sanitized.email.contains(".") then
         List(ValidationError("email", "Formato de e-mail inválido."))
+      else if sanitized.email.length > 255 then
+        List(ValidationError("email", "E-mail não pode ter mais de 255 caracteres."))
       else Nil
 
     val phoneErrors =
@@ -81,6 +88,10 @@ object ClientService:
                   Logger[F].info(s"Client created id=${client.id} for userId=${client.userId}")
                 case Left(ClientsError.ConflictCpf) =>
                   Logger[F].warn(s"Client create rejected (409): CPF already exists for userId=$userId")
+                case Left(ClientsError.ConflictEmail) =>
+                  Logger[F].warn(s"Client create rejected (409): E-mail already exists for userId=$userId")
+                case Left(ClientsError.ConflictPhone) =>
+                  Logger[F].warn(s"Client create rejected (409): Phone already exists for userId=$userId")
                 case Left(ClientsError.Internal(msg)) =>
                   Logger[F].error(s"Client create internal error: $msg")
                 case Left(_) => Async[F].unit
@@ -91,13 +102,56 @@ object ClientService:
         listProgram(userId, limit, offset)
           .transact(transactor)
 
+    def update(clientId: Long, request: ClientRequest, userId: Long): F[Either[ClientsError, Client]] =
+      validateRequest(request) match
+        case Left(errors) =>
+          Logger[F].info(s"Client update validation failed: ${errors.length} error(s)") *>
+            Async[F].pure(Left(ClientsError.Validation(errors)))
+        case Right(valid) =>
+          Logger[F].info(s"Client update attempt for clientId=$clientId by userId=$userId") *>
+            updateProgram(clientId, valid, userId)
+              .transact(transactor)
+              .flatTap {
+                case Right(client) =>
+                  Logger[F].info(s"Client updated id=${client.id} for userId=${client.userId}")
+                case Left(ClientsError.NotFound) =>
+                  Logger[F].warn(s"Client update rejected (404): clientId=$clientId not found for userId=$userId")
+                case Left(ClientsError.ConflictCpf) =>
+                  Logger[F].warn(s"Client update rejected (409): CPF already exists for userId=$userId")
+                case Left(ClientsError.ConflictEmail) =>
+                  Logger[F].warn(s"Client update rejected (409): E-mail already exists for userId=$userId")
+                case Left(ClientsError.ConflictPhone) =>
+                  Logger[F].warn(s"Client update rejected (409): Phone already exists for userId=$userId")
+                case Left(ClientsError.Internal(msg)) =>
+                  Logger[F].error(s"Client update internal error: $msg")
+                case Left(_) => Async[F].unit
+              }
+
+    def delete(clientId: Long, userId: Long): F[Either[ClientsError, Unit]] =
+      Logger[F].info(s"Client delete attempt for clientId=$clientId by userId=$userId") *>
+        deleteProgram(clientId, userId)
+          .transact(transactor)
+          .flatTap {
+            case Right(_) =>
+              Logger[F].info(s"Client deleted id=$clientId for userId=$userId")
+            case Left(ClientsError.NotFound) =>
+              Logger[F].warn(s"Client delete rejected (404): clientId=$clientId not found for userId=$userId")
+            case Left(ClientsError.ConflictPatients) =>
+              Logger[F].warn(s"Client delete rejected (409): clientId=$clientId has linked patients")
+            case Left(ClientsError.Internal(msg)) =>
+              Logger[F].error(s"Client delete internal error: $msg")
+            case Left(_) => Async[F].unit
+          }
+
     private def createProgram(
       valid: ClientRequest,
       userId: Long
     ): ConnectionIO[Either[ClientsError, Client]] =
       val program: EitherT[ConnectionIO, ClientsError, Client] = for
-        existing <- EitherT.right[ClientsError](clientRepo.findByUserIdAndCpf(userId, valid.documentCpf))
-        _ <- EitherT.cond[ConnectionIO](existing.isEmpty, (), ClientsError.ConflictCpf)
+        conflicts <- EitherT.right[ClientsError](clientRepo.findConflicts(userId, valid.documentCpf, valid.email, valid.phone))
+        _ <- EitherT.cond[ConnectionIO](!conflicts.exists(_.documentCpf.contains(valid.documentCpf)), (), ClientsError.ConflictCpf)
+        _ <- EitherT.cond[ConnectionIO](!conflicts.exists(_.email.contains(valid.email)), (), ClientsError.ConflictEmail)
+        _ <- EitherT.cond[ConnectionIO](!conflicts.exists(_.phone.contains(valid.phone)), (), ClientsError.ConflictPhone)
         created <- EitherT.right[ClientsError](
           clientRepo.insert(
             userId = userId,
@@ -108,6 +162,47 @@ object ClientService:
           )
         )
       yield created
+
+      program.value
+
+    private def updateProgram(
+      clientId: Long,
+      valid: ClientRequest,
+      userId: Long
+    ): ConnectionIO[Either[ClientsError, Client]] =
+      val program: EitherT[ConnectionIO, ClientsError, Client] = for
+        clientOpt <- EitherT.right[ClientsError](clientRepo.findById(clientId))
+        client <- EitherT.fromOption[ConnectionIO](clientOpt, ClientsError.NotFound)
+        _ <- EitherT.cond[ConnectionIO](client.userId == userId, (), ClientsError.NotFound)
+        conflicts <- EitherT.right[ClientsError](clientRepo.findConflictsExcluding(clientId, userId, valid.documentCpf, valid.email, valid.phone))
+        _ <- EitherT.cond[ConnectionIO](!conflicts.exists(_.documentCpf.contains(valid.documentCpf)), (), ClientsError.ConflictCpf)
+        _ <- EitherT.cond[ConnectionIO](!conflicts.exists(_.email.contains(valid.email)), (), ClientsError.ConflictEmail)
+        _ <- EitherT.cond[ConnectionIO](!conflicts.exists(_.phone.contains(valid.phone)), (), ClientsError.ConflictPhone)
+        updatedOpt <- EitherT.right[ClientsError](
+          clientRepo.update(
+            id = clientId,
+            userId = userId,
+            fullName = valid.fullName,
+            documentCpf = Some(valid.documentCpf),
+            email = Some(valid.email),
+            phone = Some(valid.phone)
+          )
+        )
+        updated <- EitherT.fromOption[ConnectionIO](updatedOpt, ClientsError.NotFound)
+      yield updated
+
+      program.value
+
+    private def deleteProgram(
+      clientId: Long,
+      userId: Long
+    ): ConnectionIO[Either[ClientsError, Unit]] =
+      val program: EitherT[ConnectionIO, ClientsError, Unit] = for
+        clientOpt <- EitherT.right[ClientsError](clientRepo.findById(clientId))
+        client <- EitherT.fromOption[ConnectionIO](clientOpt, ClientsError.NotFound)
+        _ <- EitherT.cond[ConnectionIO](client.userId == userId, (), ClientsError.NotFound)
+        _ <- EitherT.right[ClientsError](clientRepo.delete(clientId, userId))
+      yield ()
 
       program.value
 

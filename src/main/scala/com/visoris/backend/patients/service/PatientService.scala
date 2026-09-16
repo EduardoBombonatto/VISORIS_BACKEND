@@ -5,12 +5,12 @@ import cats.effect.Async
 import cats.syntax.all.*
 
 import com.visoris.backend.patients.domain.{Patient, PatientType}
-import com.visoris.backend.patients.dto.{PatientRequest, ValidationError}
+import com.visoris.backend.patients.dto.{PatientRequest, UpdatePatientRequest, ValidationError}
 import com.visoris.backend.patients.repository.{ClientRepository, PatientRepository}
 import doobie.ConnectionIO
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
-import io.circe.Json
+import io.circe.{Json, JsonObject}
 import java.time.LocalDate
 import org.typelevel.log4cats.Logger
 
@@ -18,11 +18,14 @@ sealed trait PatientsError
 object PatientsError:
   final case class Validation(errors: List[ValidationError]) extends PatientsError
   case object NotFound extends PatientsError
+  case object ConflictAppointments extends PatientsError
   final case class Internal(message: String) extends PatientsError
 
 trait PatientService[F[_]]:
   def create(request: PatientRequest, userId: Long): F[Either[PatientsError, Patient]]
   def listByClient(clientId: Long, userId: Long, limit: Long, offset: Long): F[Either[PatientsError, List[Patient]]]
+  def update(patientId: Long, request: UpdatePatientRequest, userId: Long): F[Either[PatientsError, Patient]]
+  def delete(patientId: Long, userId: Long): F[Either[PatientsError, Unit]]
 
 object PatientService:
 
@@ -39,8 +42,20 @@ object PatientService:
     biologicalDetails: Json
   )
 
-  def validateRequest(request: PatientRequest): Either[List[ValidationError], ValidPatient] =
-    val rawName = request.sanitizedName
+  final case class ValidUpdatePatient(
+    name: String,
+    patientType: PatientType,
+    birthDate: Option[LocalDate],
+    biologicalDetails: Json
+  )
+
+  private def validatePatientFields(
+    name: String,
+    patientTypeEither: Either[String, PatientType],
+    birthDate: Option[LocalDate],
+    biologicalDetails: Json
+  ): Either[List[ValidationError], (String, PatientType, Option[LocalDate], Json)] =
+    val rawName = name.trim
 
     val nameErrors =
       if rawName.isEmpty then List(ValidationError("name", "Nome do paciente é obrigatório."))
@@ -48,31 +63,83 @@ object PatientService:
         List(ValidationError("name", s"Nome deve ter entre $MinNameLength e $MaxNameLength caracteres."))
       else Nil
 
-    val typeErrors = request.patientType match
+    val typeErrors = patientTypeEither match
       case Left(msg) => List(ValidationError("patient_type", msg))
       case Right(_)  => Nil
 
-    val birthDateErrors = request.birthDate match
+    val pType = patientTypeEither.toOption
+
+    val birthDateFutureErrors = birthDate match
       case Some(date) if date.isAfter(LocalDate.now()) =>
         List(ValidationError("birth_date", "Data de nascimento não pode estar no futuro."))
       case _ => Nil
 
+    val bioErrors = pType match
+      case Some(PatientType.PET) =>
+        val ageOpt = biologicalDetails.hcursor.downField("age").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+        val birthOrAgeError =
+          if birthDate.isEmpty && ageOpt.isEmpty then
+            List(ValidationError("birth_date", "Informe a data de nascimento ou a idade do animal."))
+          else Nil
+
+        val breedOpt = biologicalDetails.hcursor.downField("breed").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+        val breedError =
+          if breedOpt.isEmpty then List(ValidationError("breed", "Raça é obrigatória para o animal."))
+          else if breedOpt.exists(_.length > 100) then List(ValidationError("breed", "Raça não pode ter mais de 100 caracteres."))
+          else Nil
+
+        val coatColorOpt = biologicalDetails.hcursor
+          .downField("coat_color")
+          .as[String]
+          .orElse(biologicalDetails.hcursor.downField("coatColor").as[String])
+          .toOption
+          .map(_.trim)
+          .filter(_.nonEmpty)
+
+        val coatColorError =
+          if coatColorOpt.isEmpty then List(ValidationError("coat_color", "Cor da pelagem é obrigatória para o animal."))
+          else if coatColorOpt.exists(_.length > 100) then List(ValidationError("coat_color", "Cor da pelagem não pode ter mais de 100 caracteres."))
+          else Nil
+
+        birthOrAgeError ++ breedError ++ coatColorError
+      case _ => Nil
+
+    val allErrors = nameErrors ++ typeErrors ++ birthDateFutureErrors ++ bioErrors
+    if allErrors.nonEmpty then Left(allErrors)
+    else
+      val baseObj = biologicalDetails.asObject.getOrElse(JsonObject.empty)
+      val breedOpt = biologicalDetails.hcursor.downField("breed").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+      val coatColorOpt = biologicalDetails.hcursor
+        .downField("coat_color")
+        .as[String]
+        .orElse(biologicalDetails.hcursor.downField("coatColor").as[String])
+        .toOption
+        .map(_.trim)
+        .filter(_.nonEmpty)
+      val ageOpt = biologicalDetails.hcursor.downField("age").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+
+      val withBreed = breedOpt.fold(baseObj)(b => baseObj.add("breed", Json.fromString(b)))
+      val withCoat = coatColorOpt.fold(withBreed)(c => withBreed.add("coat_color", Json.fromString(c)))
+      val withAge = ageOpt.fold(withCoat)(a => withCoat.add("age", Json.fromString(a)))
+      val sanitizedBio = Json.fromJsonObject(withAge)
+
+      Right((rawName, pType.get, birthDate, sanitizedBio))
+
+  def validateRequest(request: PatientRequest): Either[List[ValidationError], ValidPatient] =
     val clientErrors =
       if request.clientId <= 0 then List(ValidationError("client_id", "ID do cliente inválido."))
       else Nil
 
-    val allErrors = nameErrors ++ typeErrors ++ birthDateErrors ++ clientErrors
-    if allErrors.nonEmpty then Left(allErrors)
-    else
-      Right(
-        ValidPatient(
-          clientId = request.clientId,
-          name = rawName,
-          patientType = request.patientType.toOption.get,
-          birthDate = request.birthDate,
-          biologicalDetails = request.biologicalDetails
-        )
-      )
+    validatePatientFields(request.name, request.patientType, request.birthDate, request.biologicalDetails) match
+      case Left(errors) => Left(clientErrors ++ errors)
+      case Right((name, pType, bDate, bio)) =>
+        if clientErrors.nonEmpty then Left(clientErrors)
+        else Right(ValidPatient(request.clientId, name, pType, bDate, bio))
+
+  def validateUpdateRequest(request: UpdatePatientRequest): Either[List[ValidationError], ValidUpdatePatient] =
+    validatePatientFields(request.name, request.patientType, request.birthDate, request.biologicalDetails).map {
+      case (name, pType, bDate, bio) => ValidUpdatePatient(name, pType, bDate, bio)
+    }
 
   def make[F[_]: Async: Logger](
     patientRepo: PatientRepository[F],
@@ -104,6 +171,41 @@ object PatientService:
         listProgram(clientId, userId, limit, offset)
           .transact(transactor)
 
+    def update(patientId: Long, request: UpdatePatientRequest, userId: Long): F[Either[PatientsError, Patient]] =
+      validateUpdateRequest(request) match
+        case Left(errors) =>
+          Logger[F].info(s"Patient update validation failed: ${errors.length} error(s)") *>
+            Async[F].pure(Left(PatientsError.Validation(errors)))
+        case Right(valid) =>
+          Logger[F].info(s"Patient update attempt for patientId=$patientId by userId=$userId") *>
+            updateProgram(patientId, valid, userId)
+              .transact(transactor)
+              .flatTap {
+                case Right(patient) =>
+                  Logger[F].info(s"Patient updated id=${patient.id}")
+                case Left(PatientsError.NotFound) =>
+                  Logger[F].warn(s"Patient update rejected (404): patientId=$patientId not found for userId=$userId")
+                case Left(PatientsError.Internal(msg)) =>
+                  Logger[F].error(s"Patient update internal error: $msg")
+                case Left(_) => Async[F].unit
+              }
+
+    def delete(patientId: Long, userId: Long): F[Either[PatientsError, Unit]] =
+      Logger[F].info(s"Patient delete attempt for patientId=$patientId by userId=$userId") *>
+        deleteProgram(patientId, userId)
+          .transact(transactor)
+          .flatTap {
+            case Right(_) =>
+              Logger[F].info(s"Patient deleted id=$patientId for userId=$userId")
+            case Left(PatientsError.NotFound) =>
+              Logger[F].warn(s"Patient delete rejected (404): patientId=$patientId not found for userId=$userId")
+            case Left(PatientsError.ConflictAppointments) =>
+              Logger[F].warn(s"Patient delete rejected (409): patientId=$patientId has linked appointments")
+            case Left(PatientsError.Internal(msg)) =>
+              Logger[F].error(s"Patient delete internal error: $msg")
+            case Left(_) => Async[F].unit
+          }
+
     private def createProgram(
       valid: ValidPatient,
       userId: Long
@@ -122,6 +224,40 @@ object PatientService:
           )
         )
       yield created
+
+      program.value
+
+    private def updateProgram(
+      patientId: Long,
+      valid: ValidUpdatePatient,
+      userId: Long
+    ): ConnectionIO[Either[PatientsError, Patient]] =
+      val program: EitherT[ConnectionIO, PatientsError, Patient] = for
+        ownerOpt <- EitherT.right[PatientsError](patientRepo.findOwnerUserId(patientId))
+        _ <- EitherT.cond[ConnectionIO](ownerOpt.contains(userId), (), PatientsError.NotFound)
+        updatedOpt <- EitherT.right[PatientsError](
+          patientRepo.update(
+            id = patientId,
+            name = valid.name,
+            patientType = valid.patientType,
+            birthDate = valid.birthDate,
+            biologicalDetails = valid.biologicalDetails
+          )
+        )
+        updated <- EitherT.fromOption[ConnectionIO](updatedOpt, PatientsError.NotFound)
+      yield updated
+
+      program.value
+
+    private def deleteProgram(
+      patientId: Long,
+      userId: Long
+    ): ConnectionIO[Either[PatientsError, Unit]] =
+      val program: EitherT[ConnectionIO, PatientsError, Unit] = for
+        ownerOpt <- EitherT.right[PatientsError](patientRepo.findOwnerUserId(patientId))
+        _ <- EitherT.cond[ConnectionIO](ownerOpt.contains(userId), (), PatientsError.NotFound)
+        _ <- EitherT.right[PatientsError](patientRepo.delete(patientId))
+      yield ()
 
       program.value
 

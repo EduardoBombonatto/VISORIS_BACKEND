@@ -22,6 +22,20 @@ trait PatientRepository[F[_]]:
 
   def findByClientId(clientId: Long, limit: Long, offset: Long): ConnectionIO[List[Patient]]
 
+  def update(
+    id: Long,
+    name: String,
+    patientType: PatientType,
+    birthDate: Option[LocalDate],
+    biologicalDetails: Json
+  ): ConnectionIO[Option[Patient]]
+
+  def delete(id: Long): ConnectionIO[Int]
+
+  def hasAppointments(patientId: Long): ConnectionIO[Boolean]
+
+  def findOwnerUserId(patientId: Long): ConnectionIO[Option[Long]]
+
 object PatientRepository:
   def make[F[_]](transactor: Transactor[F]): PatientRepository[F] = new PatientRepository[F]:
 
@@ -52,3 +66,36 @@ object PatientRepository:
             LIMIT $limit OFFSET $offset"""
         .query[Patient]
         .to[List]
+
+    def update(
+      id: Long,
+      name: String,
+      patientType: PatientType,
+      birthDate: Option[LocalDate],
+      biologicalDetails: Json
+    ): ConnectionIO[Option[Patient]] =
+      sql"""UPDATE patients
+            SET name = $name,
+                patient_type = $patientType,
+                birth_date = $birthDate,
+                biological_details = $biologicalDetails
+            WHERE id = $id
+            RETURNING id, client_id, name, patient_type, birth_date, biological_details, created_at"""
+        .query[Patient]
+        .option
+
+    def delete(id: Long): ConnectionIO[Int] =
+      sql"""DELETE FROM patients WHERE id = $id""".update.run
+
+    def hasAppointments(patientId: Long): ConnectionIO[Boolean] =
+      sql"""SELECT EXISTS (SELECT 1 FROM appointments WHERE patient_id = $patientId)"""
+        .query[Boolean]
+        .unique
+
+    def findOwnerUserId(patientId: Long): ConnectionIO[Option[Long]] =
+      sql"""SELECT c.user_id
+            FROM patients p
+            JOIN clients c ON c.id = p.client_id
+            WHERE p.id = $patientId"""
+        .query[Long]
+        .option

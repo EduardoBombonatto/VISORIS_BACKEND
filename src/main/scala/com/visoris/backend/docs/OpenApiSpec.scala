@@ -630,6 +630,52 @@ object OpenApiSpec:
   private val clientsPath: (String, Json) =
     "/api/v1/clients" -> obj("get" -> clientsGetOperation, "post" -> clientsPostOperation)
 
+  private val clientsPutOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(clientsTag)),
+      "summary" -> str("Atualiza os dados de um tutor/cliente."),
+      "description" -> str("Atualiza as informações do tutor pertencente ao usuário autenticado."),
+      "operationId" -> str("clientsUpdate"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do cliente."))
+      ),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("ClientRequest")))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Cliente atualizado com sucesso.", successEnvelope("ClientResponse"), obj("erro" -> bool(false), "message" -> str("Cliente atualizado com sucesso."), "data" -> obj("id" -> str("8712345678901239999"), "userId" -> str("8712345678901234567"), "fullName" -> str("Carlos Silva"), "documentCpf" -> str("12345678909"), "email" -> str("carlos@example.com"), "phone" -> str("11987654321"), "createdAt" -> str(timestampExample)), "httpcode" -> int(200), "timestamp" -> str(timestampExample))),
+        "400" -> validationResponse("Requisição inválida ou campos obrigatórios ausentes.", List("dados-invalidos" -> validationExample(List("full_name" -> "Nome do tutor é obrigatório.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Cliente não encontrado.", genericErrorExample("Cliente não encontrado.", 404)),
+        "409" -> errorResponse("Conflito de CPF, e-mail ou telefone.", genericErrorExample("Este CPF já está cadastrado para este usuário.", 409)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val clientsDeleteOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(clientsTag)),
+      "summary" -> str("Exclui um tutor/cliente."),
+      "description" -> str("Remove um tutor vinculado ao usuário autenticado caso não haja pacientes vinculados."),
+      "operationId" -> str("clientsDelete"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do cliente."))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Cliente excluído com sucesso.", errorEnvelope, obj("erro" -> bool(false), "message" -> str("Cliente excluído com sucesso."), "data" -> Json.Null, "httpcode" -> int(200), "timestamp" -> str(timestampExample))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Cliente não encontrado.", genericErrorExample("Cliente não encontrado.", 404)),
+        "409" -> errorResponse("Conflito. Existem pacientes vinculados.", genericErrorExample("Não é possível excluir o tutor pois existem pacientes vinculados.", 409)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val clientsItemPath: (String, Json) =
+    "/api/v1/clients/{id}" -> obj("put" -> clientsPutOperation, "delete" -> clientsDeleteOperation)
+
   // Patients --------------------------------------------------------------------
 
   private val createPatientSuccessExample: Json =
@@ -714,6 +760,51 @@ object OpenApiSpec:
 
   private val patientsPath: (String, Json) =
     "/api/v1/patients" -> obj("get" -> patientsGetOperation, "post" -> patientsPostOperation)
+
+  private val patientsPutOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(patientsTag)),
+      "summary" -> str("Atualiza os dados de um paciente."),
+      "description" -> str("Atualiza as informações do paciente pertencente ao tutor do usuário autenticado."),
+      "operationId" -> str("patientsUpdate"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do paciente."))
+      ),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("UpdatePatientRequest")))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Paciente atualizado com sucesso.", successEnvelope("PatientResponse"), createPatientSuccessExample),
+        "400" -> validationResponse("Requisição inválida ou campos incorretos.", List("dados-invalidos" -> validationExample(List("name" -> "Nome do paciente é obrigatório.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Paciente não encontrado.", genericErrorExample("Paciente não encontrado.", 404)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val patientsDeleteOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(patientsTag)),
+      "summary" -> str("Exclui um paciente."),
+      "description" -> str("Remove o paciente pertencente ao usuário autenticado caso não haja consultas vinculadas."),
+      "operationId" -> str("patientsDelete"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do paciente."))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Paciente excluído com sucesso.", errorEnvelope, obj("erro" -> bool(false), "message" -> str("Paciente excluído com sucesso."), "data" -> Json.Null, "httpcode" -> int(200), "timestamp" -> str(timestampExample))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Paciente não encontrado.", genericErrorExample("Paciente não encontrado.", 404)),
+        "409" -> errorResponse("Conflito. Existem consultas vinculadas.", genericErrorExample("Não é possível excluir o paciente pois existem consultas vinculadas.", 409)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val patientsItemPath: (String, Json) =
+    "/api/v1/patients/{id}" -> obj("put" -> patientsPutOperation, "delete" -> patientsDeleteOperation)
 
   // Components ------------------------------------------------------------------
 
@@ -855,6 +946,13 @@ object OpenApiSpec:
       "PatientListResponse" -> requiredObject(
         List("patients"),
         "patients" -> arrayOf(ref("PatientResponse"))
+      ),
+      "UpdatePatientRequest" -> requiredObject(
+        List("name", "patient_type", "biological_details"),
+        "name" -> obj("type" -> str("string"), "description" -> str("Nome do paciente.")),
+        "patient_type" -> obj("type" -> str("string"), "enum" -> Json.arr(str("PET"), str("HUMAN")), "description" -> str("Tipo de paciente (PET ou HUMAN).")),
+        "birth_date" -> obj("type" -> str("string"), "format" -> str("date"), "nullable" -> bool(true), "description" -> str("Data de nascimento (YYYY-MM-DD).")),
+        "biological_details" -> obj("type" -> str("object"), "description" -> str("Detalhes biológicos livres em formato JSON (raça, pelagem, idade, etc.)."))
       )
     )
 
@@ -885,7 +983,7 @@ object OpenApiSpec:
         obj("name" -> str(clientsTag), "description" -> str("Tutores e clientes vinculados a clínicas.")),
         obj("name" -> str(patientsTag), "description" -> str("Pacientes (PET ou HUMAN) vinculados a tutores."))
       ),
-      "paths" -> obj(loginPath, refreshPath, registerPath, mePath, logoutPath, clinicsPath, clientsPath, patientsPath),
+      "paths" -> obj(loginPath, refreshPath, registerPath, mePath, logoutPath, clinicsPath, clientsPath, clientsItemPath, patientsPath, patientsItemPath),
       "components" -> obj(
         "securitySchemes" -> securitySchemes,
         "schemas" -> schemas

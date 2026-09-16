@@ -3,7 +3,7 @@ package com.visoris.backend.patients.controller
 import cats.effect.IO
 import com.visoris.backend.iam.domain.User
 import com.visoris.backend.patients.domain.{Patient, PatientType}
-import com.visoris.backend.patients.dto.{PatientRequest, ValidationError}
+import com.visoris.backend.patients.dto.{PatientRequest, UpdatePatientRequest, ValidationError}
 import com.visoris.backend.patients.service.{PatientService, PatientsError}
 import io.circe.Json
 import java.time.{Instant, LocalDate}
@@ -36,10 +36,14 @@ class PatientControllerSpec extends CatsEffectSuite:
 
   private def mockService(
     createResult: Either[PatientsError, Patient] = Right(samplePatient),
-    listResult: Either[PatientsError, List[Patient]] = Right(List(samplePatient))
+    listResult: Either[PatientsError, List[Patient]] = Right(List(samplePatient)),
+    updateResult: Either[PatientsError, Patient] = Right(samplePatient),
+    deleteResult: Either[PatientsError, Unit] = Right(())
   ): PatientService[IO] = new PatientService[IO]:
     def create(request: PatientRequest, userId: Long): IO[Either[PatientsError, Patient]] = IO.pure(createResult)
     def listByClient(clientId: Long, userId: Long, limit: Long, offset: Long): IO[Either[PatientsError, List[Patient]]] = IO.pure(listResult)
+    def update(patientId: Long, request: UpdatePatientRequest, userId: Long): IO[Either[PatientsError, Patient]] = IO.pure(updateResult)
+    def delete(patientId: Long, userId: Long): IO[Either[PatientsError, Unit]] = IO.pure(deleteResult)
 
   test("POST /api/v1/patients returns 201 Created on valid input") {
     val service = mockService()
@@ -126,6 +130,87 @@ class PatientControllerSpec extends CatsEffectSuite:
     val routes = PatientController.routes[IO](service)
 
     val req = Request[IO](Method.GET, uri"/api/v1/patients?clientId=20")
+
+    routes.run(ContextRequest(testUser, req)).value.map {
+      case Some(resp) => assertEquals(resp.status, Status.NotFound)
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("PUT /api/v1/patients/{id} returns 200 on success") {
+    val service = mockService()
+    val routes = PatientController.routes[IO](service)
+
+    val body = Json.obj(
+      "name" -> Json.fromString("Rex Atualizado"),
+      "patient_type" -> Json.fromString("PET"),
+      "birth_date" -> Json.fromString("2022-05-10"),
+      "biological_details" -> Json.obj("species" -> Json.fromString("Canino"), "breed" -> Json.fromString("Labrador"), "coat_color" -> Json.fromString("Amarelo"))
+    )
+    val req = Request[IO](Method.PUT, uri"/api/v1/patients/800").withEntity(body)
+
+    routes.run(ContextRequest(testUser, req)).value.flatMap {
+      case Some(resp) =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map { json =>
+          assertEquals(json.hcursor.downField("erro").as[Boolean], Right(false))
+          assertEquals(json.hcursor.downField("data").downField("name").as[String], Right("Rex"))
+        }
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("PUT /api/v1/patients/{id} returns 404 when patient not found") {
+    val service = mockService(updateResult = Left(PatientsError.NotFound))
+    val routes = PatientController.routes[IO](service)
+
+    val body = Json.obj(
+      "name" -> Json.fromString("Rex"),
+      "patient_type" -> Json.fromString("PET"),
+      "birth_date" -> Json.fromString("2022-05-10"),
+      "biological_details" -> Json.obj()
+    )
+    val req = Request[IO](Method.PUT, uri"/api/v1/patients/999").withEntity(body)
+
+    routes.run(ContextRequest(testUser, req)).value.map {
+      case Some(resp) => assertEquals(resp.status, Status.NotFound)
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("DELETE /api/v1/patients/{id} returns 200 on success") {
+    val service = mockService()
+    val routes = PatientController.routes[IO](service)
+
+    val req = Request[IO](Method.DELETE, uri"/api/v1/patients/800")
+
+    routes.run(ContextRequest(testUser, req)).value.flatMap {
+      case Some(resp) =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map { json =>
+          assertEquals(json.hcursor.downField("erro").as[Boolean], Right(false))
+        }
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("DELETE /api/v1/patients/{id} returns 409 when patient has appointments") {
+    val service = mockService(deleteResult = Left(PatientsError.ConflictAppointments))
+    val routes = PatientController.routes[IO](service)
+
+    val req = Request[IO](Method.DELETE, uri"/api/v1/patients/800")
+
+    routes.run(ContextRequest(testUser, req)).value.map {
+      case Some(resp) => assertEquals(resp.status, Status.Conflict)
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("DELETE /api/v1/patients/{id} returns 404 when patient not found") {
+    val service = mockService(deleteResult = Left(PatientsError.NotFound))
+    val routes = PatientController.routes[IO](service)
+
+    val req = Request[IO](Method.DELETE, uri"/api/v1/patients/999")
 
     routes.run(ContextRequest(testUser, req)).value.map {
       case Some(resp) => assertEquals(resp.status, Status.NotFound)

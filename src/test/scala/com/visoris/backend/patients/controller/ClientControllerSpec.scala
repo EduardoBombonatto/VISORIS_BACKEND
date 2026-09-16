@@ -37,10 +37,14 @@ class ClientControllerSpec extends CatsEffectSuite:
 
   private def mockService(
     createResult: Either[ClientsError, Client] = Right(sampleClient),
-    listResult: Either[ClientsError, List[Client]] = Right(List(sampleClient))
+    listResult: Either[ClientsError, List[Client]] = Right(List(sampleClient)),
+    updateResult: Either[ClientsError, Client] = Right(sampleClient),
+    deleteResult: Either[ClientsError, Unit] = Right(())
   ): ClientService[IO] = new ClientService[IO]:
     def create(request: ClientRequest, userId: Long): IO[Either[ClientsError, Client]] = IO.pure(createResult)
     def listByUser(userId: Long, limit: Long, offset: Long): IO[Either[ClientsError, List[Client]]] = IO.pure(listResult)
+    def update(clientId: Long, request: ClientRequest, userId: Long): IO[Either[ClientsError, Client]] = IO.pure(updateResult)
+    def delete(clientId: Long, userId: Long): IO[Either[ClientsError, Unit]] = IO.pure(deleteResult)
 
   test("POST /api/v1/clients returns 201 Created on valid input") {
     val service = mockService()
@@ -142,6 +146,87 @@ class ClientControllerSpec extends CatsEffectSuite:
     val routes = ClientController.routes[IO](service)
 
     val req = Request[IO](Method.GET, uri"/api/v1/clients")
+
+    routes.run(ContextRequest(testUser, req)).value.map {
+      case Some(resp) => assertEquals(resp.status, Status.NotFound)
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("PUT /api/v1/clients/{id} returns 200 on success") {
+    val service = mockService()
+    val routes = ClientController.routes[IO](service)
+
+    val body = Json.obj(
+      "full_name" -> Json.fromString("Maria Souza Silva"),
+      "document_cpf" -> Json.fromString("12345678909"),
+      "email" -> Json.fromString("maria.silva@example.com"),
+      "phone" -> Json.fromString("11987654321")
+    )
+    val req = Request[IO](Method.PUT, uri"/api/v1/clients/500").withEntity(body)
+
+    routes.run(ContextRequest(testUser, req)).value.flatMap {
+      case Some(resp) =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map { json =>
+          assertEquals(json.hcursor.downField("erro").as[Boolean], Right(false))
+          assertEquals(json.hcursor.downField("data").downField("id").as[String], Right("500"))
+        }
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("PUT /api/v1/clients/{id} returns 404 when client not found or not owned") {
+    val service = mockService(updateResult = Left(ClientsError.NotFound))
+    val routes = ClientController.routes[IO](service)
+
+    val body = Json.obj(
+      "full_name" -> Json.fromString("Maria Souza"),
+      "document_cpf" -> Json.fromString("12345678909"),
+      "email" -> Json.fromString("maria@example.com"),
+      "phone" -> Json.fromString("11987654321")
+    )
+    val req = Request[IO](Method.PUT, uri"/api/v1/clients/999").withEntity(body)
+
+    routes.run(ContextRequest(testUser, req)).value.map {
+      case Some(resp) => assertEquals(resp.status, Status.NotFound)
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("DELETE /api/v1/clients/{id} returns 200 on success") {
+    val service = mockService()
+    val routes = ClientController.routes[IO](service)
+
+    val req = Request[IO](Method.DELETE, uri"/api/v1/clients/500")
+
+    routes.run(ContextRequest(testUser, req)).value.flatMap {
+      case Some(resp) =>
+        assertEquals(resp.status, Status.Ok)
+        resp.as[Json].map { json =>
+          assertEquals(json.hcursor.downField("erro").as[Boolean], Right(false))
+        }
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("DELETE /api/v1/clients/{id} returns 409 when client has patients") {
+    val service = mockService(deleteResult = Left(ClientsError.ConflictPatients))
+    val routes = ClientController.routes[IO](service)
+
+    val req = Request[IO](Method.DELETE, uri"/api/v1/clients/500")
+
+    routes.run(ContextRequest(testUser, req)).value.map {
+      case Some(resp) => assertEquals(resp.status, Status.Conflict)
+      case None => fail("Route not matched")
+    }
+  }
+
+  test("DELETE /api/v1/clients/{id} returns 404 when client not found") {
+    val service = mockService(deleteResult = Left(ClientsError.NotFound))
+    val routes = ClientController.routes[IO](service)
+
+    val req = Request[IO](Method.DELETE, uri"/api/v1/clients/999")
 
     routes.run(ContextRequest(testUser, req)).value.map {
       case Some(resp) => assertEquals(resp.status, Status.NotFound)

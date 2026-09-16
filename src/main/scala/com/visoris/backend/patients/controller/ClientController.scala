@@ -73,12 +73,66 @@ object ClientController:
               case Left(ClientsError.ConflictCpf) =>
                 Conflict(ApiResponse.error("Este CPF já está cadastrado para este usuário.", 409).asJson)
                   .map(_.withContentType(jsonContent))
+              case Left(ClientsError.ConflictEmail) =>
+                Conflict(ApiResponse.error("Este e-mail já está cadastrado para este usuário.", 409).asJson)
+                  .map(_.withContentType(jsonContent))
+              case Left(ClientsError.ConflictPhone) =>
+                Conflict(ApiResponse.error("Este telefone já está cadastrado para este usuário.", 409).asJson)
+                  .map(_.withContentType(jsonContent))
               case Left(ClientsError.Internal(msg)) =>
                 InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+              case Left(_) =>
+                BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
               case Right(client) =>
                 val response = CreateClientResponse(client.id.toString)
                 Created(ApiResponse.success("Cliente cadastrado com sucesso.", response, 201).asJson)
                   .map(_.withContentType(jsonContent))
             }
+        }
+
+      case req @ PUT -> Root / "api" / "v1" / "clients" / LongVar(clientId) as user =>
+        req.req.as[ClientRequest].attempt.flatMap {
+          case Left(_) =>
+            BadRequest(ApiResponse.error("Requisição inválida. Verifique o formato dos dados.", 400).asJson)
+              .map(_.withContentType(jsonContent))
+          case Right(clientReq) =>
+            service.update(clientId, clientReq, user.id).flatMap {
+              case Left(ClientsError.Validation(errors)) =>
+                BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
+              case Left(ClientsError.NotFound) =>
+                NotFound(ApiResponse.error("Cliente não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
+              case Left(ClientsError.ConflictCpf) =>
+                Conflict(ApiResponse.error("Este CPF já está cadastrado para este usuário.", 409).asJson)
+                  .map(_.withContentType(jsonContent))
+              case Left(ClientsError.ConflictEmail) =>
+                Conflict(ApiResponse.error("Este e-mail já está cadastrado para este usuário.", 409).asJson)
+                  .map(_.withContentType(jsonContent))
+              case Left(ClientsError.ConflictPhone) =>
+                Conflict(ApiResponse.error("Este telefone já está cadastrado para este usuário.", 409).asJson)
+                  .map(_.withContentType(jsonContent))
+              case Left(ClientsError.Internal(msg)) =>
+                InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+              case Left(_) =>
+                BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
+              case Right(client) =>
+                Ok(ApiResponse.success("Cliente atualizado com sucesso.", toResponse(client), 200).asJson)
+                  .map(_.withContentType(jsonContent))
+            }
+        }
+
+      case DELETE -> Root / "api" / "v1" / "clients" / LongVar(clientId) as user =>
+        service.delete(clientId, user.id).flatMap {
+          case Left(ClientsError.NotFound) =>
+            NotFound(ApiResponse.error("Cliente não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
+          case Left(ClientsError.ConflictPatients) =>
+            Conflict(ApiResponse.error("Não é possível excluir o tutor pois existem pacientes vinculados.", 409).asJson)
+              .map(_.withContentType(jsonContent))
+          case Left(ClientsError.Internal(msg)) =>
+            InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+          case Left(_) =>
+            BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
+          case Right(_) =>
+            Ok(ApiResponse.success("Cliente excluído com sucesso.", Option.empty[String], 200).asJson)
+              .map(_.withContentType(jsonContent))
         }
     }

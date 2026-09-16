@@ -28,6 +28,26 @@ object PatientRequest:
     yield PatientRequest(clientId, name, patientType, birthDate, bioDetails)
   }
 
+final case class UpdatePatientRequest(
+  name: String,
+  patientType: Either[String, PatientType],
+  birthDate: Option[LocalDate],
+  biologicalDetails: Json
+):
+  def sanitizedName: String = name.trim
+
+object UpdatePatientRequest:
+  given Decoder[UpdatePatientRequest] = Decoder.instance { cursor =>
+    for
+      name <- cursor.downField("name").as[String].orElse(Right(""))
+      rawType <- cursor.downField("patient_type").as[String].orElse(cursor.downField("patientType").as[String]).orElse(Right(""))
+      patientType = PatientType.fromString(rawType)
+      rawBirthDate <- cursor.downField("birth_date").as[Option[String]].orElse(cursor.downField("birthDate").as[Option[String]])
+      birthDate = rawBirthDate.flatMap(s => Try(LocalDate.parse(s.trim)).toOption)
+      bioDetails <- cursor.downField("biological_details").as[Json].orElse(cursor.downField("biologicalDetails").as[Json]).orElse(Right(Json.obj()))
+    yield UpdatePatientRequest(name, patientType, birthDate, bioDetails)
+  }
+
 final case class PatientResponse(
   id: String,
   clientId: Option[String],

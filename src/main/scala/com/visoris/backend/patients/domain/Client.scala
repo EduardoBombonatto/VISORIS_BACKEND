@@ -39,6 +39,8 @@ object Client:
       Left("Telefone do cliente deve ter entre 10 e 11 dígitos.")
     else if trimmedEmail.exists(e => !e.contains("@") || !e.contains(".")) then
       Left("Formato de e-mail inválido.")
+    else if trimmedEmail.exists(_.length > 255) then
+      Left("E-mail não pode ter mais de 255 caracteres.")
     else if sanitizedCpf.exists(_.length != 11) then
       Left("CPF deve conter 11 dígitos.")
     else
