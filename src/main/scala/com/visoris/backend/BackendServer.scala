@@ -3,6 +3,9 @@ package com.visoris.backend
 import cats.effect.{Async, Resource}
 import cats.syntax.all.*
 import com.comcast.ip4s.*
+import com.visoris.backend.appointments.controller.AppointmentController
+import com.visoris.backend.appointments.repository.AppointmentRepository
+import com.visoris.backend.appointments.service.AppointmentService
 import com.visoris.backend.clinics.controller.ClinicsController
 import com.visoris.backend.clinics.repository.{ClinicRepository, DoctorClinicRepository}
 import com.visoris.backend.clinics.service.ClinicsService
@@ -16,6 +19,9 @@ import com.visoris.backend.patients.repository.{ClientRepository, PatientReposit
 import com.visoris.backend.patients.service.{ClientService, PatientService}
 import com.visoris.backend.shared.auth.{AuthMiddleware, TokenService}
 import com.visoris.backend.shared.dto.ApiResponse
+import com.visoris.backend.templates.controller.TemplateController
+import com.visoris.backend.templates.repository.TemplateRepository
+import com.visoris.backend.templates.service.TemplateService
 import fs2.io.net.Network
 import io.circe.syntax.*
 import org.http4s.ember.server.EmberServerBuilder
@@ -89,9 +95,17 @@ object BackendServer:
         ClientController.routes[F](clientService) <+> PatientController.routes[F](patientService)
       )
 
+      appointmentRepo = AppointmentRepository.make[F](transactor)
+      appointmentService = AppointmentService.make[F](appointmentRepo, doctorClinicRepo, patientRepo, transactor)
+      appointmentsRoutes = authMiddleware(AppointmentController.routes[F](appointmentService))
+
+      templateRepo = TemplateRepository.make[F](transactor)
+      templateService = TemplateService.make[F](templateRepo, transactor)
+      templatesRoutes = authMiddleware(TemplateController.routes[F](templateService))
+
       authRoutes = AuthController.routes[F](registrationService, authService)
       docsRoutes = DocsController.routes[F]
-      httpApp = corsConfig(errorHandler((authRoutes <+> docsRoutes <+> clinicsRoutes <+> patientsModuleRoutes).orNotFound))
+      httpApp = corsConfig(errorHandler((authRoutes <+> docsRoutes <+> clinicsRoutes <+> patientsModuleRoutes <+> appointmentsRoutes <+> templatesRoutes).orNotFound))
 
       _ <-
         EmberServerBuilder.default[F]

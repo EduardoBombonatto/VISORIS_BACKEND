@@ -38,7 +38,9 @@ class DocsControllerSpec extends CatsEffectSuite:
         Set(
           "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/register", "/api/v1/auth/me",
           "/api/v1/auth/logout", "/api/v1/clinics", "/api/v1/clients", "/api/v1/clients/{id}",
-          "/api/v1/patients", "/api/v1/patients/{id}"
+          "/api/v1/patients", "/api/v1/patients/{id}",
+          "/api/v1/appointments", "/api/v1/appointments/{id}/status",
+          "/api/v1/templates", "/api/v1/templates/{id}"
         )
       )
   }
@@ -119,9 +121,40 @@ class DocsControllerSpec extends CatsEffectSuite:
           "ClinicData", "CreateClinicRequest", "ClinicListResponse", "CreateClinicResponse",
           "ClientRequest", "ClientResponse", "CreateClientResponse", "ClientListResponse",
           "PatientRequest", "PatientResponse", "CreatePatientResponse", "PatientListResponse",
-          "UpdatePatientRequest"
+          "UpdatePatientRequest",
+          "ExamStatus", "ReportStatus", "PaymentStatus",
+          "CreateAppointmentRequest", "UpdateAppointmentStatusRequest",
+          "AppointmentResponse", "CreateAppointmentResponse", "AppointmentListResponse",
+          "CreateTemplateRequest", "CreateTemplateResponse", "UpdateTemplateRequest",
+          "TemplateSummaryResponse", "TemplateListResponse", "TemplateDetailResponse"
         )
       )
+  }
+
+  test("appointments documents create (201), list (200), and status update (200) with cookie security") {
+    val req = Request[IO](Method.GET, uri"/api/v1/docs/openapi.json")
+    for
+      resp <- routes.run(req)
+      body <- resp.as[String]
+    yield
+      val json = parse(body).getOrElse(fail("OpenAPI spec is not valid JSON"))
+      val postCodes = json.hcursor
+        .downField("paths").downField("/api/v1/appointments").downField("post").downField("responses")
+        .keys.fold(Set.empty[String])(_.toSet)
+      assertEquals(postCodes, Set("201", "400", "401", "404", "500"))
+
+      val getCodes = json.hcursor
+        .downField("paths").downField("/api/v1/appointments").downField("get").downField("responses")
+        .keys.fold(Set.empty[String])(_.toSet)
+      assertEquals(getCodes, Set("200", "400", "401", "404", "500"))
+
+      val patchCodes = json.hcursor
+        .downField("paths").downField("/api/v1/appointments/{id}/status").downField("patch").downField("responses")
+        .keys.fold(Set.empty[String])(_.toSet)
+      assertEquals(patchCodes, Set("200", "400", "401", "404", "500"))
+
+      val tags = json.hcursor.downField("tags").as[List[Json]].getOrElse(Nil)
+      assert(tags.exists(_.hcursor.downField("name").as[String].contains("Appointments")), "Appointments tag missing")
   }
 
   test("docs index serves the Swagger UI HTML shell") {
@@ -162,3 +195,28 @@ class DocsControllerSpec extends CatsEffectSuite:
     val req = Request[IO](Method.GET, uri"/api/v1/docs/swagger-ui/does-not-exist.js")
     routes.run(req).map(resp => assertEquals(resp.status, Status.NotFound))
   }
+
+  test("openapi.json documents Templates tag, paths, and schemas") {
+    val req = Request[IO](Method.GET, uri"/api/v1/docs/openapi.json")
+    for
+      resp <- routes.run(req)
+      body <- resp.as[String]
+    yield
+      val json = parse(body).getOrElse(fail("OpenAPI spec is not valid JSON"))
+      val tags = json.hcursor.downField("tags").as[List[Json]].getOrElse(Nil)
+        .flatMap(_.hcursor.downField("name").as[String].toOption)
+      assert(tags.contains("Templates"))
+
+      val schemas = keysAt(json, "components", "schemas")
+      assert(schemas.contains("CreateTemplateRequest"))
+      assert(schemas.contains("CreateTemplateResponse"))
+      assert(schemas.contains("UpdateTemplateRequest"))
+      assert(schemas.contains("TemplateSummaryResponse"))
+      assert(schemas.contains("TemplateListResponse"))
+      assert(schemas.contains("TemplateDetailResponse"))
+
+      val templatePaths = json.hcursor.downField("paths").keys.fold(Set.empty[String])(_.toSet)
+      assert(templatePaths.contains("/api/v1/templates"))
+      assert(templatePaths.contains("/api/v1/templates/{id}"))
+  }
+

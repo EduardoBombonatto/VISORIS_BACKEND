@@ -12,6 +12,7 @@ object OpenApiSpec:
 
   private val stringField: Json = obj("type" -> str("string"))
   private val stringNullableField: Json = obj("type" -> str("string"), "nullable" -> bool(true))
+  private val numberNullableField: Json = obj("type" -> str("number"), "nullable" -> bool(true))
   private val int32Field: Json = obj("type" -> str("integer"), "format" -> str("int32"))
   private val booleanField: Json = obj("type" -> str("boolean"))
   private val dateTimeField: Json = obj("type" -> str("string"), "format" -> str("date-time"))
@@ -204,6 +205,8 @@ object OpenApiSpec:
   private val clinicsTag = "Clinics"
   private val clientsTag = "Clients"
   private val patientsTag = "Patients"
+  private val appointmentsTag = "Appointments"
+  private val templatesTag = "Templates"
 
   private val loginPath: (String, Json) =
     "/api/v1/auth/login" -> obj(
@@ -726,7 +729,7 @@ object OpenApiSpec:
       "operationId" -> str("patientsList"),
       "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
       "parameters" -> Json.arr(
-        obj("name" -> str("clientId"), "in" -> str("query"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do cliente/tutor.")),
+        obj("name" -> str("clientId"), "in" -> str("query"), "required" -> bool(true), "schema" -> obj("type" -> str("string")), "description" -> str("ID do cliente/tutor (Snowflake).")),
         obj("name" -> str("limit"), "in" -> str("query"), "required" -> bool(false), "schema" -> obj("type" -> str("integer"), "default" -> int(50))),
         obj("name" -> str("offset"), "in" -> str("query"), "required" -> bool(false), "schema" -> obj("type" -> str("integer"), "default" -> int(0)))
       ),
@@ -805,6 +808,295 @@ object OpenApiSpec:
 
   private val patientsItemPath: (String, Json) =
     "/api/v1/patients/{id}" -> obj("put" -> patientsPutOperation, "delete" -> patientsDeleteOperation)
+
+  // Appointments ----------------------------------------------------------------
+
+  private val appointmentResponseExample: Json =
+    obj(
+      "id" -> str("8712345678901237777"),
+      "userId" -> str("8712345678901234567"),
+      "clinicId" -> str("8712345678901234567"),
+      "patientId" -> str("8712345678901238888"),
+      "scheduledAt" -> str("2026-10-15T14:30:00Z"),
+      "procedureName" -> str("Endoscopia Digestiva Alta"),
+      "examStatus" -> str("SCHEDULED"),
+      "reportStatus" -> str("PENDING"),
+      "paymentStatus" -> str("UNPAID"),
+      "price" -> Json.fromBigDecimal(BigDecimal("450.00")),
+      "createdAt" -> str(timestampExample),
+      "updatedAt" -> str(timestampExample),
+      "patientName" -> str("Rex"),
+      "patientType" -> str("PET"),
+      "clientName" -> str("Carlos Silva"),
+      "clinicName" -> str("Clínica Vida")
+    )
+
+  private val createAppointmentSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Agendamento criado com sucesso."),
+      "data" -> obj("appointment" -> appointmentResponseExample),
+      "httpcode" -> int(201),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val appointmentsListSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Agendamentos listados com sucesso."),
+      "data" -> obj("appointments" -> Json.arr(appointmentResponseExample)),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val updateAppointmentStatusSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Status atualizado com sucesso."),
+      "data" -> appointmentResponseExample,
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val appointmentsPostOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(appointmentsTag)),
+      "summary" -> str("Cria um novo agendamento na agenda do médico."),
+      "description" -> str(
+        """Cria o agendamento com status iniciais SCHEDULED, PENDING e UNPAID.
+          |Valida se clinic_id e patient_id pertencem ao médico autenticado, retornando 404 caso não pertençam.""".stripMargin),
+      "operationId" -> str("createAppointment"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("CreateAppointmentRequest")))
+      ),
+      "responses" -> obj(
+        "201" -> jsonResponseWithExample("Agendamento criado com sucesso.", successEnvelope("CreateAppointmentResponse"), createAppointmentSuccessExample),
+        "400" -> validationResponse("Requisição inválida ou dados incorretos.", List("dados-invalidos" -> validationExample(List("procedure_name" -> "Nome do procedimento é obrigatório.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Clínica ou paciente não encontrados.", genericErrorExample("Clínica ou paciente não encontrados.", 404)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val appointmentsGetOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(appointmentsTag)),
+      "summary" -> str("Lista agendamentos do médico autenticado com dados enriquecidos."),
+      "description" -> str(
+        """Retorna a lista de agendamentos do médico autenticado enriquecida com dados do paciente, tutor e clínica via JOIN.
+          |Filtros opcionais: startDate, endDate e clinicId.""".stripMargin),
+      "operationId" -> str("listAppointments"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("startDate"), "in" -> str("query"), "required" -> bool(false), "schema" -> obj("type" -> str("string"), "format" -> str("date-time")), "description" -> str("Filtro data inicial (ISO 8601).")),
+        obj("name" -> str("endDate"), "in" -> str("query"), "required" -> bool(false), "schema" -> obj("type" -> str("string"), "format" -> str("date-time")), "description" -> str("Filtro data final (ISO 8601).")),
+        obj("name" -> str("clinicId"), "in" -> str("query"), "required" -> bool(false), "schema" -> obj("type" -> str("integer")), "description" -> str("Filtro por ID da clínica."))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Agendamentos listados com sucesso.", successEnvelope("AppointmentListResponse"), appointmentsListSuccessExample),
+        "400" -> validationResponse("Parâmetros inválidos.", List("dados-invalidos" -> validationExample(List("startDate" -> "Formato de data inválido: 'invalid'. Formato esperado: ISO 8601.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Clínica não encontrada.", genericErrorExample("Clínica não encontrada.", 404)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val appointmentsPath: (String, Json) =
+    "/api/v1/appointments" -> obj("get" -> appointmentsGetOperation, "post" -> appointmentsPostOperation)
+
+  private val appointmentsPatchOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(appointmentsTag)),
+      "summary" -> str("Atualiza independentemente os status de exame, laudo ou pagamento de um agendamento."),
+      "description" -> str("Permite atualizar exam_status, report_status e payment_status de forma independente."),
+      "operationId" -> str("updateAppointmentStatus"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do agendamento (Snowflake)."))
+      ),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("UpdateAppointmentStatusRequest")))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Status atualizado com sucesso.", successEnvelope("AppointmentResponse"), updateAppointmentStatusSuccessExample),
+        "400" -> validationResponse("Requisição inválida ou nenhum status fornecido.", List("dados-invalidos" -> validationExample(List("status" -> "Ao menos um status deve ser informado para atualização.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Agendamento não encontrado.", genericErrorExample("Agendamento não encontrado.", 404)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val appointmentsStatusPath: (String, Json) =
+    "/api/v1/appointments/{id}/status" -> obj("patch" -> appointmentsPatchOperation)
+
+  // Templates Operations & Examples -------------------------------------------
+
+  private val createTemplateSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Template cadastrado com sucesso."),
+      "data" -> obj("id" -> str("123456789012345678")),
+      "httpcode" -> int(201),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val templateSummaryExample: Json =
+    obj(
+      "id" -> str("123456789012345678"),
+      "title" -> str("Ecocardiograma Normal"),
+      "createdAt" -> str(timestampExample)
+    )
+
+  private val templateListSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Templates listados com sucesso."),
+      "data" -> obj("templates" -> Json.arr(templateSummaryExample)),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val templateDetailSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Template obtido com sucesso."),
+      "data" -> obj(
+        "id" -> str("123456789012345678"),
+        "userId" -> str("987654321098765432"),
+        "title" -> str("Ecocardiograma Normal"),
+        "content" -> str("<p>Estruturas cardíacas dentro dos limites da normalidade.</p>"),
+        "createdAt" -> str(timestampExample),
+        "updatedAt" -> str(timestampExample)
+      ),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val updateTemplateSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Template atualizado com sucesso."),
+      "data" -> obj(
+        "id" -> str("123456789012345678"),
+        "userId" -> str("987654321098765432"),
+        "title" -> str("Ecocardiograma Atualizado"),
+        "content" -> str("<p>Estruturas cardíacas dentro dos limites da normalidade.</p>"),
+        "createdAt" -> str(timestampExample),
+        "updatedAt" -> str(timestampExample)
+      ),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val deleteTemplateSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Template excluído com sucesso."),
+      "data" -> Json.Null,
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val templatesPostOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(templatesTag)),
+      "summary" -> str("Cria um novo template"),
+      "description" -> str("Cria um template com título e conteúdo rico/HTML para o utilizador autenticado."),
+      "operationId" -> str("createTemplate"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("CreateTemplateRequest")))
+      ),
+      "responses" -> obj(
+        "201" -> jsonResponseWithExample("Template cadastrado com sucesso.", successEnvelope("CreateTemplateResponse"), createTemplateSuccessExample),
+        "400" -> validationResponse("Dados de requisição inválidos.", List("dados-invalidos" -> validationExample(List("title" -> "Título do template é obrigatório.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val templatesGetOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(templatesTag)),
+      "summary" -> str("Lista os templates do médico"),
+      "description" -> str("Retorna os templates pertencentes exclusivamente ao utilizador logado, omitindo o conteúdo rico para otimizar o payload."),
+      "operationId" -> str("listTemplates"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Templates listados com sucesso.", successEnvelope("TemplateListResponse"), templateListSuccessExample),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val templatesPath: (String, Json) =
+    "/api/v1/templates" -> obj("get" -> templatesGetOperation, "post" -> templatesPostOperation)
+
+  private val templatesItemGetOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(templatesTag)),
+      "summary" -> str("Obtém um template por ID"),
+      "description" -> str("Retorna o template completo incluindo o conteúdo rico/HTML caso pertença ao médico autenticado."),
+      "operationId" -> str("getTemplateById"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do template (Snowflake)."))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Template obtido com sucesso.", successEnvelope("TemplateDetailResponse"), templateDetailSuccessExample),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Template não encontrado.", genericErrorExample("Template não encontrado.", 404)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val templatesItemPutOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(templatesTag)),
+      "summary" -> str("Atualiza um template existente"),
+      "description" -> str("Atualiza título e/ou conteúdo do template garantindo que pertença ao médico autenticado."),
+      "operationId" -> str("updateTemplate"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do template (Snowflake)."))
+      ),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("UpdateTemplateRequest")))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Template atualizado com sucesso.", successEnvelope("TemplateDetailResponse"), updateTemplateSuccessExample),
+        "400" -> validationResponse("Dados de requisição inválidos.", List("dados-invalidos" -> validationExample(List("body" -> "Pelo menos um campo ('title' ou 'content') deve ser fornecido para atualização.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Template não encontrado.", genericErrorExample("Template não encontrado.", 404)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val templatesItemDeleteOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(templatesTag)),
+      "summary" -> str("Exclui um template"),
+      "description" -> str("Remove o template caso pertença ao médico autenticado."),
+      "operationId" -> str("deleteTemplate"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do template (Snowflake)."))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Template excluído com sucesso.", obj("erro" -> bool(false), "message" -> str("Template excluído com sucesso."), "httpcode" -> int(200), "timestamp" -> dateTimeField), deleteTemplateSuccessExample),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Template não encontrado.", genericErrorExample("Template não encontrado.", 404)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val templatesItemPath: (String, Json) =
+    "/api/v1/templates/{id}" -> obj("get" -> templatesItemGetOperation, "put" -> templatesItemPutOperation, "delete" -> templatesItemDeleteOperation)
 
   // Components ------------------------------------------------------------------
 
@@ -953,6 +1245,101 @@ object OpenApiSpec:
         "patient_type" -> obj("type" -> str("string"), "enum" -> Json.arr(str("PET"), str("HUMAN")), "description" -> str("Tipo de paciente (PET ou HUMAN).")),
         "birth_date" -> obj("type" -> str("string"), "format" -> str("date"), "nullable" -> bool(true), "description" -> str("Data de nascimento (YYYY-MM-DD).")),
         "biological_details" -> obj("type" -> str("object"), "description" -> str("Detalhes biológicos livres em formato JSON (raça, pelagem, idade, etc.)."))
+      ),
+      "ExamStatus" -> obj(
+        "type" -> str("string"),
+        "enum" -> Json.arr(str("SCHEDULED"), str("IN_PROGRESS"), str("COMPLETED"), str("CANCELLED")),
+        "description" -> str("Status de realização do exame.")
+      ),
+      "ReportStatus" -> obj(
+        "type" -> str("string"),
+        "enum" -> Json.arr(str("PENDING"), str("DRAFT"), str("COMPLETED")),
+        "description" -> str("Status de elaboração do laudo.")
+      ),
+      "PaymentStatus" -> obj(
+        "type" -> str("string"),
+        "enum" -> Json.arr(str("UNPAID"), str("PAID"), str("INSURANCE")),
+        "description" -> str("Status de liquidação financeira.")
+      ),
+      "CreateAppointmentRequest" -> requiredObject(
+        List("clinic_id", "patient_id", "scheduled_at", "procedure_name"),
+        "clinic_id" -> obj("type" -> str("integer"), "description" -> str("ID da clínica (Snowflake).")),
+        "patient_id" -> obj("type" -> str("integer"), "description" -> str("ID do paciente (Snowflake).")),
+        "scheduled_at" -> obj("type" -> str("string"), "format" -> str("date-time"), "description" -> str("Data e hora agendada (ISO 8601).")),
+        "procedure_name" -> obj("type" -> str("string"), "description" -> str("Nome do procedimento ou exame.")),
+        "price" -> numberNullableField,
+        "payment_status" -> ref("PaymentStatus")
+      ),
+      "UpdateAppointmentStatusRequest" -> obj(
+        "type" -> str("object"),
+        "properties" -> obj(
+          "exam_status" -> ref("ExamStatus"),
+          "report_status" -> ref("ReportStatus"),
+          "payment_status" -> ref("PaymentStatus")
+        ),
+        "description" -> str("Atualização parcial independente de status do agendamento.")
+      ),
+      "AppointmentResponse" -> requiredObject(
+        List("id", "userId", "clinicId", "patientId", "scheduledAt", "procedureName", "examStatus", "reportStatus", "paymentStatus", "createdAt", "updatedAt", "patientName", "patientType", "clientName", "clinicName"),
+        "id" -> obj("type" -> str("string"), "description" -> str("ID do agendamento (Snowflake).")),
+        "userId" -> obj("type" -> str("string"), "description" -> str("ID do médico responsável (Snowflake).")),
+        "clinicId" -> obj("type" -> str("string"), "description" -> str("ID da clínica (Snowflake).")),
+        "patientId" -> obj("type" -> str("string"), "description" -> str("ID do paciente (Snowflake).")),
+        "scheduledAt" -> dateTimeField,
+        "procedureName" -> stringField,
+        "examStatus" -> ref("ExamStatus"),
+        "reportStatus" -> ref("ReportStatus"),
+        "paymentStatus" -> ref("PaymentStatus"),
+        "price" -> numberNullableField,
+        "createdAt" -> dateTimeField,
+        "updatedAt" -> dateTimeField,
+        "patientName" -> stringField,
+        "patientType" -> stringField,
+        "clientName" -> stringField,
+        "clinicName" -> stringField
+      ),
+      "CreateAppointmentResponse" -> requiredObject(
+        List("appointment"),
+        "appointment" -> ref("AppointmentResponse")
+      ),
+      "AppointmentListResponse" -> requiredObject(
+        List("appointments"),
+        "appointments" -> arrayOf(ref("AppointmentResponse"))
+      ),
+      "CreateTemplateRequest" -> requiredObject(
+        List("title", "content"),
+        "title" -> stringField,
+        "content" -> stringField
+      ),
+      "CreateTemplateResponse" -> requiredObject(
+        List("id"),
+        "id" -> stringField
+      ),
+      "UpdateTemplateRequest" -> obj(
+        "type" -> str("object"),
+        "properties" -> obj(
+          "title" -> stringNullableField,
+          "content" -> stringNullableField
+        )
+      ),
+      "TemplateSummaryResponse" -> requiredObject(
+        List("id", "title", "createdAt"),
+        "id" -> stringField,
+        "title" -> stringField,
+        "createdAt" -> dateTimeField
+      ),
+      "TemplateListResponse" -> requiredObject(
+        List("templates"),
+        "templates" -> arrayOf(ref("TemplateSummaryResponse"))
+      ),
+      "TemplateDetailResponse" -> requiredObject(
+        List("id", "userId", "title", "content", "createdAt", "updatedAt"),
+        "id" -> stringField,
+        "userId" -> stringField,
+        "title" -> stringField,
+        "content" -> stringField,
+        "createdAt" -> dateTimeField,
+        "updatedAt" -> dateTimeField
       )
     )
 
@@ -981,9 +1368,16 @@ object OpenApiSpec:
         obj("name" -> str(authTag), "description" -> str("Autenticação, registro e renovação de sessão.")),
         obj("name" -> str(clinicsTag), "description" -> str("Clínicas (locais de atendimento) do usuário autenticado.")),
         obj("name" -> str(clientsTag), "description" -> str("Tutores e clientes vinculados a clínicas.")),
-        obj("name" -> str(patientsTag), "description" -> str("Pacientes (PET ou HUMAN) vinculados a tutores."))
+        obj("name" -> str(patientsTag), "description" -> str("Pacientes (PET ou HUMAN) vinculados a tutores.")),
+        obj("name" -> str(appointmentsTag), "description" -> str("Agendamento e controle financeiro de procedimentos.")),
+        obj("name" -> str(templatesTag), "description" -> str("Templates de laudos clínicos do médico."))
       ),
-      "paths" -> obj(loginPath, refreshPath, registerPath, mePath, logoutPath, clinicsPath, clientsPath, clientsItemPath, patientsPath, patientsItemPath),
+      "paths" -> obj(
+        loginPath, refreshPath, registerPath, mePath, logoutPath, clinicsPath,
+        clientsPath, clientsItemPath, patientsPath, patientsItemPath,
+        appointmentsPath, appointmentsStatusPath,
+        templatesPath, templatesItemPath
+      ),
       "components" -> obj(
         "securitySchemes" -> securitySchemes,
         "schemas" -> schemas
