@@ -9,7 +9,7 @@ import com.visoris.backend.appointments.service.AppointmentService
 import com.visoris.backend.clinics.controller.ClinicsController
 import com.visoris.backend.clinics.repository.{ClinicRepository, DoctorClinicRepository}
 import com.visoris.backend.clinics.service.ClinicsService
-import com.visoris.backend.config.Database
+import com.visoris.backend.config.{AppConfig, Database}
 import com.visoris.backend.docs.DocsController
 import com.visoris.backend.iam.controller.AuthController
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
@@ -17,6 +17,9 @@ import com.visoris.backend.iam.service.{AuthService, RegistrationService}
 import com.visoris.backend.patients.controller.{ClientController, PatientController}
 import com.visoris.backend.patients.repository.{ClientRepository, PatientRepository}
 import com.visoris.backend.patients.service.{ClientService, PatientService}
+import com.visoris.backend.reports.controller.ReportController
+import com.visoris.backend.reports.repository.{ReportImageRepository, ReportRepository}
+import com.visoris.backend.reports.service.ReportService
 import com.visoris.backend.shared.auth.{AuthMiddleware, TokenService}
 import com.visoris.backend.shared.dto.ApiResponse
 import com.visoris.backend.templates.controller.TemplateController
@@ -34,17 +37,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BackendServer:
 
-  private def allowedOrigins: Set[CIString] =
-    sys.env
-      .getOrElse("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
-      .split(',')
-      .iterator
-      .map(_.trim)
-      .filter(_.nonEmpty)
-      .map(CIString(_))
-      .toSet
-
-  private def corsConfig: CORSPolicy =
+  private def corsConfig(allowedOrigins: Set[CIString]): CORSPolicy =
     CORS.policy
       .withAllowOriginHostCi(allowedOrigins)
       .withAllowCredentials(true)
@@ -63,19 +56,17 @@ object BackendServer:
       }
     }
 
-  def run[F[_] : Async : Network]: F[Nothing] = {
+  def run[F[_] : Async : Network]: F[Nothing] =
+    AppConfig.load[F].flatMap(config => run[F](config))
+
+  def run[F[_] : Async : Network](config: AppConfig): F[Nothing] = {
     given Logger[F] = Slf4jLogger.getLogger[F]
 
     val appResource = for {
-      dbUrl <- Resource.pure[F, String](sys.env.getOrElse("DB_URL", "jdbc:postgresql://postgres:5432/visoris_db"))
-      dbUser <- Resource.pure[F, String](sys.env.getOrElse("DB_USER", "postgres"))
-      dbPass <- Resource.pure[F, String](sys.env.getOrElse("DB_PASSWORD", "postgres"))
-      jwtSecret <- Resource.pure[F, String](sys.env.getOrElse("JWT_SECRET", "changeme-dev-secret"))
-
-      transactor <- Database.makeTransactor[F](dbUrl, dbUser, dbPass)
+      transactor <- Database.makeTransactor[F](config.database)
       _ <- Resource.eval(Database.runMigrations[F](transactor))
 
-      tokenService = TokenService.make(jwtSecret)
+      tokenService = TokenService.make(config.jwtSecret.value)
       userRepo = UserRepository.make[F](transactor)
       refreshTokenRepo = RefreshTokenRepository.make[F](transactor)
       registrationService = RegistrationService.make[F](tokenService, transactor, userRepo, refreshTokenRepo)
@@ -103,9 +94,21 @@ object BackendServer:
       templateService = TemplateService.make[F](templateRepo, transactor)
       templatesRoutes = authMiddleware(TemplateController.routes[F](templateService))
 
+      reportRepo = ReportRepository.make[F](transactor)
+      reportImageRepo = ReportImageRepository.make[F](transactor)
+      reportService = ReportService.make[F](
+        reportRepo,
+        reportImageRepo,
+        appointmentRepo,
+        clinicRepo,
+        patientRepo,
+        transactor
+      )
+      reportsRoutes = authMiddleware(ReportController.routes[F](reportService))
+
       authRoutes = AuthController.routes[F](registrationService, authService)
       docsRoutes = DocsController.routes[F]
-      httpApp = corsConfig(errorHandler((authRoutes <+> docsRoutes <+> clinicsRoutes <+> patientsModuleRoutes <+> appointmentsRoutes <+> templatesRoutes).orNotFound))
+      httpApp = corsConfig(config.cors.allowedOrigins)(errorHandler((authRoutes <+> docsRoutes <+> clinicsRoutes <+> patientsModuleRoutes <+> appointmentsRoutes <+> templatesRoutes <+> reportsRoutes).orNotFound))
 
       _ <-
         EmberServerBuilder.default[F]

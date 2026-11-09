@@ -21,7 +21,7 @@ docker compose up     # full stack: api + postgres + minio
 | DB | Doobie + HikariCP + PostgreSQL 42.7.13 |
 | Migrations | Flyway 13.0.0 |
 | Auth | jwt-circe 11.0.4 (wired: `TokenService`, HS256) |
-| Config | ciris 3.15.0 (declared, not wired — uses `sys.env` directly) |
+| Config | ciris 3.15.0 (wired via `AppConfig`) |
 | Storage | MinIO (S3-compatible, via env config) |
 | Test | munit + munit-cats-effect 2.2.0 |
 | Logs | logback-classic (console, INFO level, ANSI colors) |

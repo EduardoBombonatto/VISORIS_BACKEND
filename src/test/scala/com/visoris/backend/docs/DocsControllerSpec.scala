@@ -40,7 +40,12 @@ class DocsControllerSpec extends CatsEffectSuite:
           "/api/v1/auth/logout", "/api/v1/clinics", "/api/v1/clients", "/api/v1/clients/{id}",
           "/api/v1/patients", "/api/v1/patients/{id}",
           "/api/v1/appointments", "/api/v1/appointments/{id}/status",
-          "/api/v1/templates", "/api/v1/templates/{id}"
+          "/api/v1/templates", "/api/v1/templates/{id}",
+          "/api/v1/reports/appointment/{appointmentId}",
+          "/api/v1/reports",
+          "/api/v1/reports/{id}",
+          "/api/v1/reports/{id}/images",
+          "/api/v1/reports/{id}/sign"
         )
       )
   }
@@ -126,7 +131,9 @@ class DocsControllerSpec extends CatsEffectSuite:
           "CreateAppointmentRequest", "UpdateAppointmentStatusRequest",
           "AppointmentResponse", "CreateAppointmentResponse", "AppointmentListResponse",
           "CreateTemplateRequest", "CreateTemplateResponse", "UpdateTemplateRequest",
-          "TemplateSummaryResponse", "TemplateListResponse", "TemplateDetailResponse"
+          "TemplateSummaryResponse", "TemplateListResponse", "TemplateDetailResponse",
+          "CreateReportRequest", "UpdateReportRequest", "ReportImageRequest",
+          "ReportImageResponse", "ReportResponse"
         )
       )
   }
@@ -218,5 +225,31 @@ class DocsControllerSpec extends CatsEffectSuite:
       val templatePaths = json.hcursor.downField("paths").keys.fold(Set.empty[String])(_.toSet)
       assert(templatePaths.contains("/api/v1/templates"))
       assert(templatePaths.contains("/api/v1/templates/{id}"))
+  }
+
+  test("openapi.json documents Reports tag, paths, and schemas") {
+    val req = Request[IO](Method.GET, uri"/api/v1/docs/openapi.json")
+    for
+      resp <- routes.run(req)
+      body <- resp.as[String]
+    yield
+      val json = parse(body).getOrElse(fail("OpenAPI spec is not valid JSON"))
+      val tags = json.hcursor.downField("tags").as[List[Json]].getOrElse(Nil)
+        .flatMap(_.hcursor.downField("name").as[String].toOption)
+      assert(tags.contains("Reports"), "Reports tag missing")
+
+      val schemas = keysAt(json, "components", "schemas")
+      assert(schemas.contains("CreateReportRequest"))
+      assert(schemas.contains("UpdateReportRequest"))
+      assert(schemas.contains("ReportImageRequest"))
+      assert(schemas.contains("ReportImageResponse"))
+      assert(schemas.contains("ReportResponse"))
+
+      val reportPaths = json.hcursor.downField("paths").keys.fold(Set.empty[String])(_.toSet)
+      assert(reportPaths.contains("/api/v1/reports/appointment/{appointmentId}"))
+      assert(reportPaths.contains("/api/v1/reports"))
+      assert(reportPaths.contains("/api/v1/reports/{id}"))
+      assert(reportPaths.contains("/api/v1/reports/{id}/images"))
+      assert(reportPaths.contains("/api/v1/reports/{id}/sign"))
   }
 

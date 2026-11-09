@@ -207,6 +207,7 @@ object OpenApiSpec:
   private val patientsTag = "Patients"
   private val appointmentsTag = "Appointments"
   private val templatesTag = "Templates"
+  private val reportsTag = "Reports"
 
   private val loginPath: (String, Json) =
     "/api/v1/auth/login" -> obj(
@@ -1098,6 +1099,207 @@ object OpenApiSpec:
   private val templatesItemPath: (String, Json) =
     "/api/v1/templates/{id}" -> obj("get" -> templatesItemGetOperation, "put" -> templatesItemPutOperation, "delete" -> templatesItemDeleteOperation)
 
+  // Reports Operations & Examples ---------------------------------------------
+
+  private val reportImageResponseExample: Json =
+    obj(
+      "id" -> str("223456789012345678"),
+      "reportId" -> str("123456789012345678"),
+      "imageUrl" -> str("https://storage.visoris.com/reports/123456/img-01.jpg"),
+      "caption" -> str("Corte longitudinal do lobo hepático esquerdo"),
+      "displayOrder" -> int(1),
+      "createdAt" -> str(timestampExample)
+    )
+
+  private def reportResponseExample(signed: Boolean): Json =
+    obj(
+      "id" -> str("123456789012345678"),
+      "appointmentId" -> str("111222333444555666"),
+      "userId" -> str("987654321098765432"),
+      "attendanceLocationName" -> str("Clínica Vida"),
+      "patientSnapshot" -> obj(
+        "id" -> str("8712345678901238888"),
+        "name" -> str("Rex"),
+        "patientType" -> str("PET")
+      ),
+      "clinicSnapshot" -> obj(
+        "id" -> str("8712345678901234567"),
+        "name" -> str("Clínica Vida")
+      ),
+      "content" -> str("<h2>Ultrassonografia Abdominal</h2><p>Fígado com dimensões preservadas.</p>"),
+      "pdfUrl" -> Json.Null,
+      "signedAt" -> (if signed then str(timestampExample) else Json.Null),
+      "createdAt" -> str(timestampExample),
+      "updatedAt" -> str(timestampExample),
+      "images" -> Json.arr(reportImageResponseExample)
+    )
+
+  private val getReportByAppointmentSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Laudo obtido com sucesso."),
+      "data" -> reportResponseExample(signed = false),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val createReportSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Laudo rascunho criado com sucesso."),
+      "data" -> reportResponseExample(signed = false),
+      "httpcode" -> int(201),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val updateReportSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Laudo atualizado com sucesso."),
+      "data" -> reportResponseExample(signed = false),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val addReportImageSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Imagem adicionada ao laudo com sucesso."),
+      "data" -> reportImageResponseExample,
+      "httpcode" -> int(201),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val signReportSuccessExample: Json =
+    obj(
+      "erro" -> bool(false),
+      "message" -> str("Laudo assinado e finalizado com sucesso."),
+      "data" -> reportResponseExample(signed = true),
+      "httpcode" -> int(200),
+      "timestamp" -> str(timestampExample)
+    )
+
+  private val reportsByAppointmentGetOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(reportsTag)),
+      "summary" -> str("Busca o laudo associado a um agendamento"),
+      "description" -> str("Retorna o laudo completo (incluindo snapshots de paciente e clínica) e a lista de imagens anexadas ordenadas por display_order."),
+      "operationId" -> str("getReportByAppointmentId"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("appointmentId"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do agendamento (Snowflake)."))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Laudo obtido com sucesso.", successEnvelope("ReportResponse"), getReportByAppointmentSuccessExample),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Laudo não encontrado para este agendamento.", genericErrorExample("Laudo não encontrado para este agendamento.", 404)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val reportsByAppointmentPath: (String, Json) =
+    "/api/v1/reports/appointment/{appointmentId}" -> obj("get" -> reportsByAppointmentGetOperation)
+
+  private val reportsPostOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(reportsTag)),
+      "summary" -> str("Cria um laudo rascunho para um agendamento"),
+      "description" -> str("Cria um laudo rascunho vinculado ao agendamento, popula snapshots de paciente e clínica, e altera o report_status do agendamento para DRAFT."),
+      "operationId" -> str("createReportDraft"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("CreateReportRequest")))
+      ),
+      "responses" -> obj(
+        "201" -> jsonResponseWithExample("Laudo rascunho criado com sucesso.", successEnvelope("ReportResponse"), createReportSuccessExample),
+        "400" -> validationResponse("Dados de requisição inválidos.", List("dados-invalidos" -> validationExample(List("appointment_id" -> "O campo 'appointment_id' é obrigatório.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Agendamento não encontrado.", genericErrorExample("Agendamento não encontrado.", 404)),
+        "409" -> errorResponse("Conflito. Já existe um laudo associado a este agendamento.", genericErrorExample("Já existe um laudo associado a este agendamento.", 409)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val reportsPath: (String, Json) =
+    "/api/v1/reports" -> obj("post" -> reportsPostOperation)
+
+  private val reportsItemPutOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(reportsTag)),
+      "summary" -> str("Atualiza o conteúdo do laudo (Auto-save/Rascunho)"),
+      "description" -> str("Atualiza o campo content de um laudo rascunho pertencente ao médico autenticado."),
+      "operationId" -> str("updateReportContent"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do laudo (Snowflake)."))
+      ),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("UpdateReportRequest")))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Laudo atualizado com sucesso.", successEnvelope("ReportResponse"), updateReportSuccessExample),
+        "400" -> validationResponse("Dados inválidos.", List("dados-invalidos" -> validationExample(List("content" -> "O campo 'content' é obrigatório.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Laudo não encontrado.", genericErrorExample("Laudo não encontrado.", 404)),
+        "409" -> errorResponse("Laudo já assinado não pode ser alterado.", genericErrorExample("Laudo já assinado não pode ser alterado.", 409)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val reportsItemPath: (String, Json) =
+    "/api/v1/reports/{id}" -> obj("put" -> reportsItemPutOperation)
+
+  private val reportsImagesPostOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(reportsTag)),
+      "summary" -> str("Adiciona imagens ao laudo"),
+      "description" -> str("Salva os metadados de uma imagem (image_url, caption, display_order) associada a um laudo em rascunho."),
+      "operationId" -> str("addReportImage"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do laudo (Snowflake)."))
+      ),
+      "requestBody" -> obj(
+        "required" -> bool(true),
+        "content" -> obj("application/json" -> obj("schema" -> ref("ReportImageRequest")))
+      ),
+      "responses" -> obj(
+        "201" -> jsonResponseWithExample("Imagem adicionada ao laudo com sucesso.", successEnvelope("ReportImageResponse"), addReportImageSuccessExample),
+        "400" -> validationResponse("Dados inválidos.", List("dados-invalidos" -> validationExample(List("image_url" -> "A URL da imagem é obrigatória.")))),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Laudo não encontrado.", genericErrorExample("Laudo não encontrado.", 404)),
+        "409" -> errorResponse("Não é permitido adicionar imagens a um laudo já assinado.", genericErrorExample("Não é permitido adicionar imagens a um laudo já assinado.", 409)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val reportsImagesPath: (String, Json) =
+    "/api/v1/reports/{id}/images" -> obj("post" -> reportsImagesPostOperation)
+
+  private val reportsSignPostOperation: Json =
+    obj(
+      "tags" -> Json.arr(str(reportsTag)),
+      "summary" -> str("Finaliza e assina o laudo"),
+      "description" -> str("Define o signed_at do laudo e altera atomicamente o report_status do agendamento associado para COMPLETED."),
+      "operationId" -> str("signReport"),
+      "security" -> Json.arr(obj("accessTokenCookie" -> Json.arr())),
+      "parameters" -> Json.arr(
+        obj("name" -> str("id"), "in" -> str("path"), "required" -> bool(true), "schema" -> obj("type" -> str("integer")), "description" -> str("ID do laudo (Snowflake)."))
+      ),
+      "responses" -> obj(
+        "200" -> jsonResponseWithExample("Laudo assinado e finalizado com sucesso.", successEnvelope("ReportResponse"), signReportSuccessExample),
+        "401" -> errorResponse("Não autenticado.", genericErrorExample("Não autenticado.", 401)),
+        "404" -> errorResponse("Laudo não encontrado.", genericErrorExample("Laudo não encontrado.", 404)),
+        "409" -> errorResponse("Laudo já foi assinado anteriormente.", genericErrorExample("Laudo já foi assinado anteriormente.", 409)),
+        "500" -> errorResponse("Erro interno do servidor.", genericErrorExample("Erro interno do servidor. Tente novamente.", 500))
+      )
+    )
+
+  private val reportsSignPath: (String, Json) =
+    "/api/v1/reports/{id}/sign" -> obj("post" -> reportsSignPostOperation)
+
   // Components ------------------------------------------------------------------
 
   private val securitySchemes: Json =
@@ -1340,6 +1542,45 @@ object OpenApiSpec:
         "content" -> stringField,
         "createdAt" -> dateTimeField,
         "updatedAt" -> dateTimeField
+      ),
+      "CreateReportRequest" -> requiredObject(
+        List("appointment_id", "content"),
+        "appointment_id" -> obj("type" -> str("integer"), "description" -> str("ID do agendamento (Snowflake).")),
+        "content" -> obj("type" -> str("string"), "description" -> str("Conteúdo HTML/texto rico do laudo."))
+      ),
+      "UpdateReportRequest" -> requiredObject(
+        List("content"),
+        "content" -> obj("type" -> str("string"), "description" -> str("Conteúdo atualizado do laudo (auto-save/rascunho)."))
+      ),
+      "ReportImageRequest" -> requiredObject(
+        List("image_url"),
+        "image_url" -> obj("type" -> str("string"), "maxLength" -> int(1024), "description" -> str("URL da imagem armazenada no S3/MinIO.")),
+        "caption" -> obj("type" -> str("string"), "maxLength" -> int(500), "nullable" -> bool(true), "description" -> str("Legenda opcional da imagem.")),
+        "display_order" -> obj("type" -> str("integer"), "default" -> int(0), "description" -> str("Ordem de exibição da imagem no laudo."))
+      ),
+      "ReportImageResponse" -> requiredObject(
+        List("id", "reportId", "imageUrl", "displayOrder", "createdAt"),
+        "id" -> stringField,
+        "reportId" -> stringField,
+        "imageUrl" -> stringField,
+        "caption" -> stringNullableField,
+        "displayOrder" -> int32Field,
+        "createdAt" -> dateTimeField
+      ),
+      "ReportResponse" -> requiredObject(
+        List("id", "appointmentId", "userId", "content", "createdAt", "updatedAt", "images"),
+        "id" -> stringField,
+        "appointmentId" -> stringField,
+        "userId" -> stringField,
+        "attendanceLocationName" -> stringNullableField,
+        "patientSnapshot" -> obj("type" -> str("object"), "nullable" -> bool(true)),
+        "clinicSnapshot" -> obj("type" -> str("object"), "nullable" -> bool(true)),
+        "content" -> stringField,
+        "pdfUrl" -> stringNullableField,
+        "signedAt" -> obj("type" -> str("string"), "format" -> str("date-time"), "nullable" -> bool(true)),
+        "createdAt" -> dateTimeField,
+        "updatedAt" -> dateTimeField,
+        "images" -> arrayOf(ref("ReportImageResponse"))
       )
     )
 
@@ -1370,13 +1611,15 @@ object OpenApiSpec:
         obj("name" -> str(clientsTag), "description" -> str("Tutores e clientes vinculados a clínicas.")),
         obj("name" -> str(patientsTag), "description" -> str("Pacientes (PET ou HUMAN) vinculados a tutores.")),
         obj("name" -> str(appointmentsTag), "description" -> str("Agendamento e controle financeiro de procedimentos.")),
-        obj("name" -> str(templatesTag), "description" -> str("Templates de laudos clínicos do médico."))
+        obj("name" -> str(templatesTag), "description" -> str("Templates de laudos clínicos do médico.")),
+        obj("name" -> str(reportsTag), "description" -> str("Elaboração, auto-save, anexação de imagens e assinatura de laudos médicos."))
       ),
       "paths" -> obj(
         loginPath, refreshPath, registerPath, mePath, logoutPath, clinicsPath,
         clientsPath, clientsItemPath, patientsPath, patientsItemPath,
         appointmentsPath, appointmentsStatusPath,
-        templatesPath, templatesItemPath
+        templatesPath, templatesItemPath,
+        reportsByAppointmentPath, reportsPath, reportsItemPath, reportsImagesPath, reportsSignPath
       ),
       "components" -> obj(
         "securitySchemes" -> securitySchemes,

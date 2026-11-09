@@ -24,6 +24,9 @@ object Database:
       )
     } yield transactor
 
+  def makeTransactor[F[_] : Async](config: DatabaseConfig): Resource[F, HikariTransactor[F]] =
+    makeTransactor(config.url, config.user, config.password.value)
+
   def runMigrations[F[_] : Sync](transactor: HikariTransactor[F]): F[Unit] =
     transactor.configure { dataSource =>
       Sync[F].delay {
