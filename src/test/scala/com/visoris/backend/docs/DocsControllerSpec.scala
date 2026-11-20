@@ -253,3 +253,41 @@ class DocsControllerSpec extends CatsEffectSuite:
       assert(reportPaths.contains("/api/v1/reports/{id}/sign"))
   }
 
+  test("all $ref pointers resolve to defined schemas, tags exist, and operationIds are unique") {
+    def collectRefs(node: Json): List[String] =
+      node.fold(
+        jsonNull = Nil,
+        jsonBoolean = _ => Nil,
+        jsonNumber = _ => Nil,
+        jsonString = _ => Nil,
+        jsonArray = arr => arr.toList.flatMap(collectRefs),
+        jsonObject = obj =>
+          obj("$ref").flatMap(_.asString).toList ++ obj.values.toList.flatMap(collectRefs)
+      )
+
+    val json = OpenApiSpec.json
+    val definedSchemas = keysAt(json, "components", "schemas")
+    val schemaRefs = collectRefs(json).collect {
+      case r if r.startsWith("#/components/schemas/") => r.stripPrefix("#/components/schemas/")
+    }
+    assert(schemaRefs.nonEmpty, "expected at least one $ref in OpenAPI spec")
+    val missingSchemas = schemaRefs.toSet -- definedSchemas
+    assertEquals(missingSchemas, Set.empty[String])
+
+    val declaredTags = json.hcursor.downField("tags").as[List[Json]].getOrElse(Nil)
+      .flatMap(_.hcursor.downField("name").as[String].toOption)
+      .toSet
+
+    val operations = for
+      pathObj <- json.hcursor.downField("paths").as[Map[String, Json]].getOrElse(Map.empty).values.toList
+      op <- pathObj.asObject.map(_.values.toList).getOrElse(Nil)
+    yield op
+
+    val operationIds = operations.flatMap(_.hcursor.downField("operationId").as[String].toOption)
+    assertEquals(operationIds.size, operations.size)
+    assertEquals(operationIds.distinct.size, operationIds.size)
+
+    val opTags = operations.flatMap(_.hcursor.downField("tags").as[List[String]].getOrElse(Nil)).toSet
+    assertEquals(opTags -- declaredTags, Set.empty[String])
+  }
+
