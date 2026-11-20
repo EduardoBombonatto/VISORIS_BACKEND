@@ -1,0 +1,19 @@
+$kind: http-request
+name: 'POST /patients (no auth -> 401)'
+method: POST
+url: '{{base_url}}/api/v1/patients'
+order: 13000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+body:
+  type: json
+  content: |-
+    {}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 401 Unauthorized (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(401);
+      });

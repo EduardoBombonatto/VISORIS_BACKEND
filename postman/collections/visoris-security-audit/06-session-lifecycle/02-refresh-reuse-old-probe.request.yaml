@@ -1,0 +1,19 @@
+$kind: http-request
+name: 'PROBE #12: POST /auth/refresh reusing rotated token immediately'
+method: POST
+url: '{{base_url}}/api/v1/auth/refresh'
+order: 2000
+headers:
+  - key: 'Cookie'
+    value: 'refreshToken={{userA_refresh_old}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Server does not crash with 500', () => {
+        pm.expect(pm.response.code).to.be.below(500);
+      });
+
+      pm.test('Reusing already-rotated refresh token should be rejected with 401 (strict rotation)', () => {
+        pm.expect(pm.response.code).to.eql(401);
+      });

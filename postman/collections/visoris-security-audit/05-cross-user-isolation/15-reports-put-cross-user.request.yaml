@@ -1,0 +1,21 @@
+$kind: http-request
+name: 'PUT /reports/:id as User B (-> 404)'
+method: PUT
+url: '{{base_url}}/api/v1/reports/{{reportA_id}}'
+order: 15000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userB_access}}; refreshToken={{userB_refresh}}'
+body:
+  type: json
+  content: |-
+    {"content":"Cross"}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Cross-user returns 404 Not Found (never 403, 200, or 500)', () => {
+        pm.expect(pm.response.code).to.eql(404);
+      });

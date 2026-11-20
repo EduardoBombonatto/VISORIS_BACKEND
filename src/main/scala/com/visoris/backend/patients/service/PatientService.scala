@@ -7,6 +7,7 @@ import cats.syntax.all.*
 import com.visoris.backend.patients.domain.{Patient, PatientType}
 import com.visoris.backend.patients.dto.{PatientRequest, UpdatePatientRequest, ValidationError}
 import com.visoris.backend.patients.repository.{ClientRepository, PatientRepository}
+import com.visoris.backend.shared.utils.SecurityUtils
 import doobie.ConnectionIO
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
@@ -31,6 +32,7 @@ object PatientService:
 
   val MinNameLength = 1
   val MaxNameLength = 255
+  val MaxBiologicalDetailsBytes = 16384
   val DefaultLimit = 50L
   val MaxLimit = 100L
 
@@ -53,12 +55,15 @@ object PatientService:
     name: String,
     patientTypeEither: Either[String, PatientType],
     birthDate: Option[LocalDate],
-    biologicalDetails: Json
+    biologicalDetails: Json,
+    invalidBirthDate: Boolean
   ): Either[List[ValidationError], (String, PatientType, Option[LocalDate], Json)] =
     val rawName = name.trim
 
     val nameErrors =
       if rawName.isEmpty then List(ValidationError("name", "Nome do paciente é obrigatório."))
+      else if SecurityUtils.containsNullByte(rawName) then
+        List(ValidationError("name", "Nome do paciente contém caracteres inválidos."))
       else if rawName.length < MinNameLength || rawName.length > MaxNameLength then
         List(ValidationError("name", s"Nome deve ter entre $MinNameLength e $MaxNameLength caracteres."))
       else Nil
@@ -69,10 +74,25 @@ object PatientService:
 
     val pType = patientTypeEither.toOption
 
+    val birthDateFormatErrors =
+      if invalidBirthDate then
+        List(ValidationError("birth_date", "Formato de data de nascimento inválido. Esperado: YYYY-MM-DD."))
+      else Nil
+
     val birthDateFutureErrors = birthDate match
       case Some(date) if date.isAfter(LocalDate.now()) =>
         List(ValidationError("birth_date", "Data de nascimento não pode estar no futuro."))
+      case Some(date) if date.getYear < 1900 =>
+        List(ValidationError("birth_date", "Data de nascimento fora do intervalo permitido."))
       case _ => Nil
+
+    val serializedBio = biologicalDetails.noSpaces
+    val bioFormatErrors =
+      if SecurityUtils.containsNullByte(serializedBio) then
+        List(ValidationError("biological_details", "Detalhes biológicos contêm caracteres inválidos."))
+      else if serializedBio.length > MaxBiologicalDetailsBytes then
+        List(ValidationError("biological_details", s"Detalhes biológicos excedem o limite máximo de $MaxBiologicalDetailsBytes bytes."))
+      else Nil
 
     val bioErrors = pType match
       case Some(PatientType.PET) =>
@@ -80,6 +100,8 @@ object PatientService:
         val birthOrAgeError =
           if birthDate.isEmpty && ageOpt.isEmpty then
             List(ValidationError("birth_date", "Informe a data de nascimento ou a idade do animal."))
+          else if ageOpt.exists(_.length > 100) then
+            List(ValidationError("age", "Idade não pode ter mais de 100 caracteres."))
           else Nil
 
         val breedOpt = biologicalDetails.hcursor.downField("breed").as[String].toOption.map(_.trim).filter(_.nonEmpty)
@@ -104,7 +126,7 @@ object PatientService:
         birthOrAgeError ++ breedError ++ coatColorError
       case _ => Nil
 
-    val allErrors = nameErrors ++ typeErrors ++ birthDateFutureErrors ++ bioErrors
+    val allErrors = nameErrors ++ typeErrors ++ birthDateFormatErrors ++ birthDateFutureErrors ++ bioFormatErrors ++ bioErrors
     if allErrors.nonEmpty then Left(allErrors)
     else
       val baseObj = biologicalDetails.asObject.getOrElse(JsonObject.empty)
@@ -130,14 +152,14 @@ object PatientService:
       if request.clientId <= 0 then List(ValidationError("client_id", "ID do cliente inválido."))
       else Nil
 
-    validatePatientFields(request.name, request.patientType, request.birthDate, request.biologicalDetails) match
+    validatePatientFields(request.name, request.patientType, request.birthDate, request.biologicalDetails, request.invalidBirthDate) match
       case Left(errors) => Left(clientErrors ++ errors)
       case Right((name, pType, bDate, bio)) =>
         if clientErrors.nonEmpty then Left(clientErrors)
         else Right(ValidPatient(request.clientId, name, pType, bDate, bio))
 
   def validateUpdateRequest(request: UpdatePatientRequest): Either[List[ValidationError], ValidUpdatePatient] =
-    validatePatientFields(request.name, request.patientType, request.birthDate, request.biologicalDetails).map {
+    validatePatientFields(request.name, request.patientType, request.birthDate, request.biologicalDetails, request.invalidBirthDate).map {
       case (name, pType, bDate, bio) => ValidUpdatePatient(name, pType, bDate, bio)
     }
 
@@ -256,6 +278,8 @@ object PatientService:
       val program: EitherT[ConnectionIO, PatientsError, Unit] = for
         ownerOpt <- EitherT.right[PatientsError](patientRepo.findOwnerUserId(patientId))
         _ <- EitherT.cond[ConnectionIO](ownerOpt.contains(userId), (), PatientsError.NotFound)
+        linked <- EitherT.right[PatientsError](patientRepo.hasAppointments(patientId))
+        _ <- EitherT.cond[ConnectionIO](!linked, (), PatientsError.ConflictAppointments)
         _ <- EitherT.right[PatientsError](patientRepo.delete(patientId))
       yield ()
 

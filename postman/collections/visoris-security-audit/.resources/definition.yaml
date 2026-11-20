@@ -1,0 +1,66 @@
+$kind: collection
+name: 'Visoris Backend Security Audit'
+description: 'Negative, unauthenticated, edge-case, 500-crash, and cross-user isolation tests across all 31 Visoris backend routes.'
+variables:
+  - key: base_url
+    value: 'http://localhost:8080'
+  - key: run_id
+    value: ''
+  - key: userA_email
+    value: ''
+  - key: userA_doc
+    value: ''
+  - key: userA_access
+    value: ''
+  - key: userA_refresh
+    value: ''
+  - key: userA_refresh_old
+    value: ''
+  - key: userB_email
+    value: ''
+  - key: userB_doc
+    value: ''
+  - key: userB_access
+    value: ''
+  - key: userB_refresh
+    value: ''
+  - key: clinicA_id
+    value: ''
+  - key: clinicA_cnpj
+    value: ''
+  - key: clientA_id
+    value: ''
+  - key: clientA_cpf
+    value: ''
+  - key: clientA2_id
+    value: ''
+  - key: patientA_id
+    value: ''
+  - key: apptA_id
+    value: ''
+  - key: templateA_id
+    value: ''
+  - key: reportA_id
+    value: ''
+scripts:
+  - type: http:beforeRequest
+    language: text/javascript
+    code: |-
+      if (!pm.collectionVariables.get('run_id')) {
+        const rid = String(Date.now()).slice(-7);
+        pm.collectionVariables.set('run_id', rid);
+        pm.collectionVariables.set('userA_email', `audit.a.${rid}@visoris.dev`);
+        pm.collectionVariables.set('userA_doc', `CRMV-A-${rid}`);
+        pm.collectionVariables.set('userB_email', `audit.b.${rid}@visoris.dev`);
+        pm.collectionVariables.set('userB_doc', `CRMV-B-${rid}`);
+      }
+  - type: http:afterResponse
+    language: text/javascript
+    code: |-
+      const bodyText = pm.response.text() || '';
+      pm.test('Does not leak stack traces, SQL internals, or secrets', () => {
+        const forbidden = ['PSQLException', 'java.lang.', 'scala.', 'passwordHash', 'password_hash', 'changeme-dev-secret', 'org.http4s.', 'doobie.'];
+        for (const token of forbidden) {
+          pm.expect(bodyText, `Leaked internal token: ${token}`).to.not.include(token);
+        }
+      });

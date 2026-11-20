@@ -42,22 +42,36 @@ object ClientController:
     val dsl = new Http4sDsl[F] {}
     import dsl.*
 
-    object OptionalLimitQueryParamMatcher extends OptionalQueryParamDecoderMatcher[Long]("limit")
-    object OptionalOffsetQueryParamMatcher extends OptionalQueryParamDecoderMatcher[Long]("offset")
+    object OptionalLimitQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("limit")
+    object OptionalOffsetQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("offset")
+
+    def parseOptionalLong(field: String, raw: Option[String]): Either[ValidationError, Option[Long]] =
+      raw match
+        case None => Right(None)
+        case Some(v) =>
+          v.trim.toLongOption.toRight(ValidationError(field, s"Parâmetro '$field' deve ser um número inteiro válido.")).map(Some(_))
 
     AuthedRoutes.of[User, F] {
-      case GET -> Root / "api" / "v1" / "clients" :? OptionalLimitQueryParamMatcher(limit) +& OptionalOffsetQueryParamMatcher(offset) as user =>
-        service.listByUser(user.id, limit.getOrElse(50L), offset.getOrElse(0L)).flatMap {
-          case Left(ClientsError.NotFound) =>
-            NotFound(ApiResponse.error("Usuário não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
-          case Left(ClientsError.Internal(msg)) =>
-            InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
-          case Left(_) =>
-            BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
-          case Right(clients) =>
-            val response = ClientListResponse(clients.map(toResponse))
-            Ok(ApiResponse.success("Clientes listados com sucesso.", response, 200).asJson).map(_.withContentType(jsonContent))
-        }
+      case GET -> Root / "api" / "v1" / "clients" :? OptionalLimitQueryParamMatcher(rawLimit) +& OptionalOffsetQueryParamMatcher(rawOffset) as user =>
+        (parseOptionalLong("limit", rawLimit), parseOptionalLong("offset", rawOffset)) match
+          case (Left(e1), Left(e2)) =>
+            BadRequest(errorResponse(List(e1, e2)).asJson).map(_.withContentType(jsonContent))
+          case (Left(e), Right(_)) =>
+            BadRequest(errorResponse(List(e)).asJson).map(_.withContentType(jsonContent))
+          case (Right(_), Left(e)) =>
+            BadRequest(errorResponse(List(e)).asJson).map(_.withContentType(jsonContent))
+          case (Right(limit), Right(offset)) =>
+            service.listByUser(user.id, limit.getOrElse(50L), offset.getOrElse(0L)).flatMap {
+              case Left(ClientsError.NotFound) =>
+                NotFound(ApiResponse.error("Usuário não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
+              case Left(ClientsError.Internal(msg)) =>
+                InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+              case Left(_) =>
+                BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
+              case Right(clients) =>
+                val response = ClientListResponse(clients.map(toResponse))
+                Ok(ApiResponse.success("Clientes listados com sucesso.", response, 200).asJson).map(_.withContentType(jsonContent))
+            }
 
       case req @ POST -> Root / "api" / "v1" / "clients" as user =>
         req.req.as[ClientRequest].attempt.flatMap {

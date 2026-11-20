@@ -5,6 +5,7 @@ import cats.syntax.all.*
 import com.visoris.backend.clinics.domain.{Clinic, Cnpj}
 import com.visoris.backend.clinics.dto.{ClinicRequest, ValidationError}
 import com.visoris.backend.clinics.repository.{ClinicRepository, DoctorClinicRepository}
+import com.visoris.backend.shared.utils.SecurityUtils
 import doobie.ConnectionIO
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
@@ -15,6 +16,7 @@ object ClinicsError:
   final case class Validation(errors: List[ValidationError]) extends ClinicsError
   final case class Internal(message: String) extends ClinicsError
   case object NotFound extends ClinicsError
+  case object ConflictCnpj extends ClinicsError
 
 sealed trait CreateResult
 object CreateResult:
@@ -39,12 +41,14 @@ object ClinicsService:
 
     val nameErrors =
       if rawName.isEmpty then List(ValidationError("name", "Nome da clínica é obrigatório."))
+      else if SecurityUtils.containsNullByte(rawName) then
+        List(ValidationError("name", "Nome da clínica contém caracteres inválidos."))
       else if rawName.length < MinNameLength || rawName.length > MaxNameLength then
         List(ValidationError("name", s"Nome da clínica deve ter entre $MinNameLength e $MaxNameLength caracteres."))
       else Nil
 
     val phoneErrors = request.phone.toList.flatMap { raw =>
-      val digits = raw.filter(_.isDigit)
+      val digits = SecurityUtils.asciiDigits(raw)
       if digits.length < 10 || digits.length > 11 then
         List(ValidationError("phone", "Telefone deve ter entre 10 e 11 dígitos (DDD + número)."))
       else Nil
@@ -56,7 +60,9 @@ object ClinicsService:
 
     val addressErrors = request.address.toList.flatMap { raw =>
       val trimmed = raw.trim
-      if trimmed.length > MaxAddressLength then
+      if SecurityUtils.containsNullByte(trimmed) then
+        List(ValidationError("address", "Endereço contém caracteres inválidos."))
+      else if trimmed.length > MaxAddressLength then
         List(ValidationError("address", s"Endereço deve ter no máximo $MaxAddressLength caracteres."))
       else Nil
     }
@@ -124,7 +130,10 @@ object ClinicsService:
         existing <- cnpj.traverse(clinicRepo.findByCnpj).map(_.flatten)
         outcome <- existing match
           case Some(clinic) =>
-            doctorClinicRepo.insert(userId, clinic.id).as(Right(CreateResult.Reused(clinic)))
+            doctorClinicRepo.isLinked(userId, clinic.id).map {
+              case true  => Right(CreateResult.Reused(clinic))
+              case false => Left(ClinicsError.ConflictCnpj)
+            }
           case None =>
             for
               inserted <- clinicRepo.insertClinicIfAbsent(name, cnpj, phone, address)
@@ -136,7 +145,10 @@ object ClinicsService:
                     case Some(value) =>
                       clinicRepo.findByCnpj(value).flatMap {
                         case Some(clinic) =>
-                          doctorClinicRepo.insert(userId, clinic.id).as(Right(CreateResult.Reused(clinic)))
+                          doctorClinicRepo.isLinked(userId, clinic.id).map {
+                            case true  => Right(CreateResult.Reused(clinic))
+                            case false => Left(ClinicsError.ConflictCnpj)
+                          }
                         case None =>
                           Left(ClinicsError.Internal("Conflito de CNPJ não resolvido.")).pure[ConnectionIO]
                       }

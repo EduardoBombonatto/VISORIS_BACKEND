@@ -42,23 +42,36 @@ object PatientController:
     val dsl = new Http4sDsl[F] {}
     import dsl.*
 
-    object ClientIdQueryParamMatcher extends QueryParamDecoderMatcher[Long]("clientId")
-    object OptionalLimitQueryParamMatcher extends OptionalQueryParamDecoderMatcher[Long]("limit")
-    object OptionalOffsetQueryParamMatcher extends OptionalQueryParamDecoderMatcher[Long]("offset")
+    object ClientIdQueryParamMatcher extends QueryParamDecoderMatcher[String]("clientId")
+    object OptionalLimitQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("limit")
+    object OptionalOffsetQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("offset")
+
+    def parseOptionalLong(field: String, raw: Option[String]): Either[ValidationError, Option[Long]] =
+      raw match
+        case None => Right(None)
+        case Some(v) =>
+          v.trim.toLongOption.toRight(ValidationError(field, s"Parâmetro '$field' deve ser um número inteiro válido.")).map(Some(_))
 
     AuthedRoutes.of[User, F] {
-      case GET -> Root / "api" / "v1" / "patients" :? ClientIdQueryParamMatcher(clientId) +& OptionalLimitQueryParamMatcher(limit) +& OptionalOffsetQueryParamMatcher(offset) as user =>
-        service.listByClient(clientId, user.id, limit.getOrElse(50L), offset.getOrElse(0L)).flatMap {
-          case Left(PatientsError.NotFound) =>
-            NotFound(ApiResponse.error("Cliente não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
-          case Left(PatientsError.Internal(msg)) =>
-            InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
-          case Left(_) =>
-            BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
-          case Right(patients) =>
-            val response = PatientListResponse(patients.map(toResponse))
-            Ok(ApiResponse.success("Pacientes listados com sucesso.", response, 200).asJson).map(_.withContentType(jsonContent))
-        }
+      case GET -> Root / "api" / "v1" / "patients" :? ClientIdQueryParamMatcher(rawClientId) +& OptionalLimitQueryParamMatcher(rawLimit) +& OptionalOffsetQueryParamMatcher(rawOffset) as user =>
+        val clientIdEither = rawClientId.trim.toLongOption.toRight(ValidationError("clientId", "Parâmetro 'clientId' deve ser um número inteiro válido."))
+        val limitEither = parseOptionalLong("limit", rawLimit)
+        val offsetEither = parseOptionalLong("offset", rawOffset)
+        val paramErrors = List(clientIdEither.left.toOption, limitEither.left.toOption, offsetEither.left.toOption).flatten
+        if paramErrors.nonEmpty then
+          BadRequest(errorResponse(paramErrors).asJson).map(_.withContentType(jsonContent))
+        else
+          service.listByClient(clientIdEither.toOption.get, user.id, limitEither.toOption.flatten.getOrElse(50L), offsetEither.toOption.flatten.getOrElse(0L)).flatMap {
+            case Left(PatientsError.NotFound) =>
+              NotFound(ApiResponse.error("Cliente não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
+            case Left(PatientsError.Internal(msg)) =>
+              InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+            case Left(_) =>
+              BadRequest(ApiResponse.error("Requisição inválida.", 400).asJson).map(_.withContentType(jsonContent))
+            case Right(patients) =>
+              val response = PatientListResponse(patients.map(toResponse))
+              Ok(ApiResponse.success("Pacientes listados com sucesso.", response, 200).asJson).map(_.withContentType(jsonContent))
+          }
 
       case req @ POST -> Root / "api" / "v1" / "patients" as user =>
         req.req.as[PatientRequest].attempt.flatMap {

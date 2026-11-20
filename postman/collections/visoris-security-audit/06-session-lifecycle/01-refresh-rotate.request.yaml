@@ -1,0 +1,25 @@
+$kind: http-request
+name: 'POST /auth/refresh (valid rotation -> 200)'
+method: POST
+url: '{{base_url}}/api/v1/auth/refresh'
+order: 1000
+headers:
+  - key: 'Cookie'
+    value: 'refreshToken={{userA_refresh}}'
+scripts:
+  - type: beforeRequest
+    language: text/javascript
+    code: |-
+      pm.collectionVariables.set('userA_refresh_old', pm.collectionVariables.get('userA_refresh'));
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const setCookies = pm.response.headers.all().filter(h => h.key.toLowerCase() === 'set-cookie').map(h => h.value);
+      for (const c of setCookies) {
+        const mAcc = c.match(/^accessToken=([^;]+)/);
+        if (mAcc) pm.collectionVariables.set('userA_access', mAcc[1]);
+        const mRef = c.match(/^refreshToken=([^;]+)/);
+        if (mRef) pm.collectionVariables.set('userA_refresh', mRef[1]);
+      }
+
+      pm.test('Refresh rotation succeeded (200)', () => pm.expect(pm.response.code).to.eql(200));

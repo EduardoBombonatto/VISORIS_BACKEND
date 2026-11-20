@@ -126,11 +126,11 @@ class ClientServiceSpec extends CatsEffectSuite:
     }
   }
 
-  test("delete succeeds and deletes client even when client has linked patients (cascade)") {
+  test("delete returns ConflictPatients (409) when client has linked patients") {
     val service = ClientService.make[IO](mockClientRepo(hasPatientsResult = true), xa)
 
     service.delete(clientId = 1L, userId = 100L).map { res =>
-      assertEquals(res, Right(()))
+      assertEquals(res, Left(ClientsError.ConflictPatients))
     }
   }
 

@@ -1,0 +1,12 @@
+$kind: http-request
+name: 'DELETE /templates/1 (no auth -> 401)'
+method: DELETE
+url: '{{base_url}}/api/v1/templates/1'
+order: 23000
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 401 Unauthorized (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(401);
+      });

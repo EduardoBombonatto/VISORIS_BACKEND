@@ -6,8 +6,10 @@ import com.visoris.backend.iam.domain.User
 import com.visoris.backend.iam.dto.{RegisterRequest, ValidationError}
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.shared.auth.{CustomClaims, OpaqueTokenGenerator, PasswordHasher, TokenService}
+import com.visoris.backend.shared.utils.SecurityUtils
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
+import java.sql.SQLException
 import org.typelevel.log4cats.Logger
 import java.time.Instant
 
@@ -37,22 +39,13 @@ object RegistrationService:
     userRepo: UserRepository[F],
     refreshTokenRepo: RefreshTokenRepository[F]
   ): RegistrationService[F] = new RegistrationService[F]:
-    private def maskEmail(email: String): String =
-      val parts = email.split("@")
-      if parts.length == 2 then
-        val local = parts(0)
-        val domain = parts(1)
-        if local.length <= 2 then s"$local**@$domain"
-        else s"${local.take(2)}**@$domain"
-      else email
-
     def register(
       request: RegisterRequest,
       deviceInfo: Option[String],
       ipAddress: Option[String]
     ): F[Either[RegistrationError, RegistrationResult]] =
-      val normalizedEmail = request.email.toLowerCase
-      val maskedEmail = maskEmail(normalizedEmail)
+      val normalizedEmail = request.email.trim.toLowerCase
+      val maskedEmail = SecurityUtils.maskEmail(normalizedEmail)
 
       val validationErrors = request.validate
       if validationErrors.nonEmpty then
@@ -132,11 +125,22 @@ object RegistrationService:
           createdAt = now
         )
 
-        _ <- userRepo.create(user).transact(transactor)
-        result <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress).transact(transactor).as(
-          Right(RegistrationResult(accessToken, user, refreshTokenPlain))
-        )
-      yield result).flatTap {
+        persistResult <- (for
+          _ <- userRepo.create(user)
+          _ <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress)
+        yield ()).transact(transactor).attempt.map {
+          case Right(_) =>
+            Right(RegistrationResult(accessToken, user, refreshTokenPlain))
+          case Left(e: SQLException) if e.getSQLState == "23505" =>
+            val msg = Option(e.getMessage).getOrElse("").toLowerCase
+            if msg.contains("professional_document") then
+              Left(RegistrationError.DuplicateField("professionalDocument", "Documento profissional já cadastrado."))
+            else
+              Left(RegistrationError.DuplicateField("email", "Este e-mail já está cadastrado."))
+          case Left(_) =>
+            Left(RegistrationError.Internal("Erro interno ao criar conta. Tente novamente."))
+        }
+      yield persistResult).flatTap {
         case Left(RegistrationError.Internal(msg)) =>
           Logger[F].error(s"Registration internal error for email=$maskedEmail: $msg")
         case Left(_) => Async[F].unit

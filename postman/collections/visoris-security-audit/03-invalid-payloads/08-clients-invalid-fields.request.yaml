@@ -1,0 +1,21 @@
+$kind: http-request
+name: 'POST /clients (missing/bad fields -> 400)'
+method: POST
+url: '{{base_url}}/api/v1/clients'
+order: 8000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"full_name":"","document_cpf":"123","email":"bad","phone":"1"}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 400 Bad Request (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

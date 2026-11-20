@@ -1,0 +1,21 @@
+$kind: http-request
+name: 'POST /clinics (invalid CNPJ & phone -> 400)'
+method: POST
+url: '{{base_url}}/api/v1/clinics'
+order: 5000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"name":"A","cnpj":"11111111111111","phone":"123"}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 400 Bad Request (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

@@ -1,0 +1,15 @@
+$kind: http-request
+name: 'POST /auth/refresh after logout (-> 401)'
+method: POST
+url: '{{base_url}}/api/v1/auth/refresh'
+order: 4000
+headers:
+  - key: 'Cookie'
+    value: 'refreshToken={{userA_refresh}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 401 Unauthorized (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(401);
+      });

@@ -65,6 +65,9 @@ object ClinicsController:
                 InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
               case Left(ClinicsError.NotFound) =>
                 NotFound(ApiResponse.error("Clínica não encontrada.", 404).asJson).map(_.withContentType(jsonContent))
+              case Left(ClinicsError.ConflictCnpj) =>
+                Conflict(ApiResponse.error("Não foi possível cadastrar clínica com este CNPJ.", 409).asJson)
+                  .map(_.withContentType(jsonContent))
               case Right(CreateResult.Created(clinic)) =>
                 val response = CreateClinicResponse(clinicData(clinic))
                 Created(ApiResponse.success("Clínica criada com sucesso.", response, 201).asJson)

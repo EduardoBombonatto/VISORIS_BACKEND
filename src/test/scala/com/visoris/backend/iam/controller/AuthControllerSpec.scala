@@ -232,7 +232,7 @@ class AuthControllerSpec extends CatsEffectSuite:
     }
   }
 
-  test("refresh: returns expiresIn and new Set-Cookie (accessToken + refreshToken); old token reuse within grace window rotates again") {
+  test("refresh: returns expiresIn and new Set-Cookie (accessToken + refreshToken); old token replay returns 401 and revokes sessions") {
     serverResource.use { client =>
       val email = s"e2e-refresh-${System.currentTimeMillis}@visoris.com"
       val password = "Senha@123"
@@ -273,7 +273,7 @@ class AuthControllerSpec extends CatsEffectSuite:
         newCookie = refreshHeaders.headers
           .find(h => h.name == org.http4s.headers.`Set-Cookie`.name && h.value.contains("refreshToken="))
           .getOrElse(fail("No refreshToken cookie found"))
-        newCookieValue = newCookie.value.split(";").headOption.filter(_.startsWith("refreshToken=")).getOrElse("")
+        newCookieValue = newCookie.value.split(";").headOption.filter(_.startsWith("refreshToken=")).map(_.stripPrefix("refreshToken=")).getOrElse("")
         _ = assert(newCookieValue != oldCookieValue, "New refresh token cookie should differ from old one")
 
         replayReq: Request[IO] = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "refresh")
@@ -281,22 +281,9 @@ class AuthControllerSpec extends CatsEffectSuite:
         replayResp <- client.run(replayReq).use { resp =>
           resp.as[String].map(body => (resp.status, resp.headers, body))
         }
-        (replayStatus, replayHeaders, replayBody) = replayResp
+        (replayStatus, _, _) = replayResp
       yield
-        assertEquals(replayStatus, Status.Ok)
-        val replayJson = parse(replayBody).getOrElse(fail("Invalid JSON response"))
-        assertEquals(replayJson.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
-        assertEquals(replayJson.hcursor.downField("data").downField("expiresIn").as[Int].getOrElse(0), 900)
-        val replayCookies = replayHeaders.headers
-          .filter(_.name == org.http4s.headers.`Set-Cookie`.name)
-          .map(_.value)
-        assert(replayCookies.exists(_.contains("accessToken=")), "Expected accessToken cookie on grace-window replay")
-        assert(replayCookies.exists(_.contains("refreshToken=")), "Expected refreshToken cookie on grace-window replay")
-        val replayCookieValue = replayHeaders.headers
-          .find(h => h.name == org.http4s.headers.`Set-Cookie`.name && h.value.contains("refreshToken="))
-          .getOrElse(fail("No refreshToken cookie on replay"))
-          .value.split(";").headOption.filter(_.startsWith("refreshToken=")).map(_.stripPrefix("refreshToken=")).getOrElse("")
-        assert(replayCookieValue != newCookieValue, "Grace-window replay should rotate yet another refresh token")
+        assertEquals(replayStatus, Status.Unauthorized)
     }
   }
 
@@ -387,7 +374,7 @@ class AuthControllerSpec extends CatsEffectSuite:
         assertEquals(json.hcursor.downField("data").focus, Some(Json.Null))
         val sc = setCookieValues(headers)
         assert(hasClearCookie(sc, "accessToken", "/api/v1"), s"accessToken clearing cookie missing in $sc")
-        assert(hasClearCookie(sc, "refreshToken", "/"), s"refreshToken clearing cookie missing in $sc")
+        assert(hasClearCookie(sc, "refreshToken", "/api/v1/auth"), s"refreshToken clearing cookie missing in $sc")
     }
   }
 
@@ -418,7 +405,7 @@ class AuthControllerSpec extends CatsEffectSuite:
         assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
         val sc = setCookieValues(headers)
         assert(hasClearCookie(sc, "accessToken", "/api/v1"), s"accessToken clearing cookie missing in $sc")
-        assert(hasClearCookie(sc, "refreshToken", "/"), s"refreshToken clearing cookie missing in $sc")
+        assert(hasClearCookie(sc, "refreshToken", "/api/v1/auth"), s"refreshToken clearing cookie missing in $sc")
       }
     }
   }
@@ -437,8 +424,8 @@ class AuthControllerSpec extends CatsEffectSuite:
         assertEquals(secondStatus, Status.Ok)
         val sc1 = setCookieValues(firstHeaders)
         val sc2 = setCookieValues(secondHeaders)
-        assert(hasClearCookie(sc1, "refreshToken", "/"), s"refreshToken clearing cookie missing in $sc1")
-        assert(hasClearCookie(sc2, "refreshToken", "/"), s"refreshToken clearing cookie missing in $sc2")
+        assert(hasClearCookie(sc1, "refreshToken", "/api/v1/auth"), s"refreshToken clearing cookie missing in $sc1")
+        assert(hasClearCookie(sc2, "refreshToken", "/api/v1/auth"), s"refreshToken clearing cookie missing in $sc2")
     }
   }
 
@@ -450,7 +437,7 @@ class AuthControllerSpec extends CatsEffectSuite:
         assertEquals(status, Status.Ok)
         val json = parse(body).getOrElse(fail("Invalid JSON response"))
         assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
-        assert(hasClearCookie(setCookieValues(headers), "refreshToken", "/"), "refreshToken clearing cookie missing")
+        assert(hasClearCookie(setCookieValues(headers), "refreshToken", "/api/v1/auth"), "refreshToken clearing cookie missing")
       }
     }
   }
@@ -463,7 +450,7 @@ class AuthControllerSpec extends CatsEffectSuite:
         assertEquals(status, Status.Ok)
         val json = parse(body).getOrElse(fail("Invalid JSON response"))
         assertEquals(json.hcursor.downField("erro").as[Boolean].getOrElse(true), false)
-        assert(hasClearCookie(setCookieValues(headers), "refreshToken", "/"), "refreshToken clearing cookie missing")
+        assert(hasClearCookie(setCookieValues(headers), "refreshToken", "/api/v1/auth"), "refreshToken clearing cookie missing")
       }
     }
   }

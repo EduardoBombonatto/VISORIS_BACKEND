@@ -239,7 +239,7 @@ class ClinicsControllerSpec extends CatsEffectSuite:
     }
   }
 
-  test("US3: second doctor reuses the existing clinic with 200 and original data") {
+  test("US3: second doctor submitting another doctor's clinic CNPJ is rejected with 409 without leaking data") {
     serverResource.use { client =>
       val cnpj = validCnpj
       for
@@ -251,14 +251,8 @@ class ClinicsControllerSpec extends CatsEffectSuite:
         (reuseStatus, reuseBody) = reuseResp
       yield
         assertEquals(createStatus, Status.Created)
-        assertEquals(reuseStatus, Status.Ok)
-        val json = parse(reuseBody).getOrElse(fail("Invalid JSON"))
-        assertEquals(json.hcursor.downField("httpcode").as[Int].getOrElse(0), 200)
-        assertEquals(
-          json.hcursor.downField("data").downField("clinic").downField("name").as[String].getOrElse(""),
-          "Clínica Original",
-          "Reuse must return the existing clinic's original name, ignoring submitted fields"
-        )
+        assertEquals(reuseStatus, Status.Conflict)
+        assert(!reuseBody.contains("Clínica Original"), "Conflict response must not leak existing clinic details")
     }
   }
 
@@ -335,10 +329,10 @@ class ClinicsControllerSpec extends CatsEffectSuite:
       yield
         assert(statusB != Status.Forbidden, "List for another doctor's data must not be 403")
         assert(statusA != Status.Forbidden, "Own list must not be 403")
-        assert(reuseStatus != Status.Forbidden, "Reuse must not be 403")
+        assert(reuseStatus != Status.Forbidden, "Unlinked CNPJ submit must not be 403")
         assertEquals(statusB, Status.Ok)
         assertEquals(statusA, Status.Ok)
-        assertEquals(reuseStatus, Status.Ok)
+        assertEquals(reuseStatus, Status.Conflict)
     }
   }
 

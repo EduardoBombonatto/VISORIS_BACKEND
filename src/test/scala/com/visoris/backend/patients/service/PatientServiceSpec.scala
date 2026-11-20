@@ -204,11 +204,11 @@ class PatientServiceSpec extends CatsEffectSuite:
     }
   }
 
-  test("delete succeeds even when patient has appointments (cascade)") {
+  test("delete returns ConflictAppointments (409) when patient has linked appointments") {
     val service = PatientService.make[IO](mockPatientRepo(ownerUserId = Some(1L), hasAppointmentsResult = true), mockClientRepo(), xa)
 
     service.delete(patientId = 800L, userId = 1L).map { res =>
-      assertEquals(res, Right(()))
+      assertEquals(res, Left(PatientsError.ConflictAppointments))
     }
   }
 

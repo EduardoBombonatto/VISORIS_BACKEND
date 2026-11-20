@@ -1,0 +1,19 @@
+$kind: http-request
+name: 'POST /reports/:id/images (add image to signed report -> 409)'
+method: POST
+url: '{{base_url}}/api/v1/reports/{{reportA_id}}/images'
+order: 13000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"image_url":"https://example.com/img.png","display_order":1}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Adding image to signed report rejected with 409 Conflict', () => pm.expect(pm.response.code).to.eql(409));

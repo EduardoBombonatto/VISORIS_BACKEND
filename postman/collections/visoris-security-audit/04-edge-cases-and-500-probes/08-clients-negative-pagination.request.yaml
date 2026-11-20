@@ -1,0 +1,22 @@
+$kind: http-request
+name: 'GET /clients?limit=-5&offset=-10 (clamped 200)'
+method: GET
+url: '{{base_url}}/api/v1/clients?limit=-5&offset=-10'
+order: 8000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+queryParams:
+  - key: 'limit'
+    value: '-5'
+  - key: 'offset'
+    value: '-10'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Server does not crash with 500', () => {
+        pm.expect(pm.response.code).to.be.below(500);
+      });
+
+      pm.test('Negative pagination safely clamped to 200', () => pm.expect(pm.response.code).to.eql(200));

@@ -1,0 +1,13 @@
+$kind: http-request
+name: 'POST /reports/:id/sign (sign twice -> 409)'
+method: POST
+url: '{{base_url}}/api/v1/reports/{{reportA_id}}/sign'
+order: 14000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Re-signing report rejected with 409 Conflict', () => pm.expect(pm.response.code).to.eql(409));

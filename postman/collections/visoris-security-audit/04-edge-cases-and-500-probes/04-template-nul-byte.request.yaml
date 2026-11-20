@@ -1,0 +1,25 @@
+$kind: http-request
+name: 'PROBE #9: POST /templates (NUL byte \u0000 in title)'
+method: POST
+url: '{{base_url}}/api/v1/templates'
+order: 4000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"title":"Null\u0000Byte","content":"Body"}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Server does not crash with 500', () => {
+        pm.expect(pm.response.code).to.be.below(500);
+      });
+
+      pm.test('NUL byte in string should return 400 (not 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

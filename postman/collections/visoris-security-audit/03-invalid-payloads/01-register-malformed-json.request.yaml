@@ -1,0 +1,19 @@
+$kind: http-request
+name: 'POST /auth/register (malformed JSON -> 400)'
+method: POST
+url: '{{base_url}}/api/v1/auth/register'
+order: 1000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+body:
+  type: text
+  content: |-
+    {"fullName": broken
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 400 Bad Request (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

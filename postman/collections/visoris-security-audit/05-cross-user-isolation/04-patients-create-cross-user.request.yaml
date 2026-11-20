@@ -1,0 +1,21 @@
+$kind: http-request
+name: 'POST /patients on Client A as User B (-> 404)'
+method: POST
+url: '{{base_url}}/api/v1/patients'
+order: 4000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userB_access}}; refreshToken={{userB_refresh}}'
+body:
+  type: json
+  content: |-
+    {"client_id":{{clientA_id}},"name":"Intruder","patient_type":"HUMAN","biological_details":{}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Cross-user returns 404 Not Found (never 403, 200, or 500)', () => {
+        pm.expect(pm.response.code).to.eql(404);
+      });

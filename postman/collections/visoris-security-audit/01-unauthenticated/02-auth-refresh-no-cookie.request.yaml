@@ -1,0 +1,12 @@
+$kind: http-request
+name: 'POST /auth/refresh (no cookie -> 401)'
+method: POST
+url: '{{base_url}}/api/v1/auth/refresh'
+order: 2000
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 401 Unauthorized (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(401);
+      });

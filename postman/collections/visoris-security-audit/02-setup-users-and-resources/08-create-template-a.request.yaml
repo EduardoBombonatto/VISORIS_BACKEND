@@ -1,0 +1,23 @@
+$kind: http-request
+name: 'POST /templates (User A creates Template A)'
+method: POST
+url: '{{base_url}}/api/v1/templates'
+order: 8000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"title":"Template Audit A","content":"Conteudo padrao do laudo."}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Template A created (201)', () => pm.expect(pm.response.code).to.eql(201));
+      const body = pm.response.json();
+      if (body && body.data && body.data.id) {
+        pm.collectionVariables.set('templateA_id', String(body.data.id));
+      }

@@ -33,8 +33,8 @@ object AuthController:
       case req @ POST -> Root / "api" / "v1" / "auth" / "login" =>
         req.as[LoginRequest].attempt.flatMap {
           case Right(loginRequest) =>
-            val deviceInfo = req.headers.get[org.http4s.headers.`User-Agent`].map(_.product.toString)
-            val ipAddress = req.from.map(_.toString)
+            val deviceInfo = req.headers.get[org.http4s.headers.`User-Agent`].map(_.product.toString.take(255))
+            val ipAddress = req.from.map(_.toString.take(45))
             authService.login(loginRequest, deviceInfo, ipAddress).flatMap {
               case Left(LoginError.Validation(errors)) =>
                 BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
@@ -185,8 +185,8 @@ object AuthController:
             ).map(_.withContentType(jsonContent))
 
           case Right(registerRequest) =>
-            val deviceInfo = req.headers.get[org.http4s.headers.`User-Agent`].map(_.product.toString)
-            val ipAddress = req.from.map(_.toString)
+            val deviceInfo = req.headers.get[org.http4s.headers.`User-Agent`].map(_.product.toString.take(255))
+            val ipAddress = req.from.map(_.toString.take(45))
 
             registrationService.register(registerRequest, deviceInfo, ipAddress).flatMap {
               case Left(RegistrationError.Validation(errors)) =>

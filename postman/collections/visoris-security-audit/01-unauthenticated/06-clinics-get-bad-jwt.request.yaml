@@ -1,0 +1,15 @@
+$kind: http-request
+name: 'GET /clinics (invalid JWT -> 401)'
+method: GET
+url: '{{base_url}}/api/v1/clinics'
+order: 6000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken=eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiIxIn0.invalid'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 401 Unauthorized (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(401);
+      });

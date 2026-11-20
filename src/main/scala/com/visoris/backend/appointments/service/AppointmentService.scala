@@ -8,6 +8,7 @@ import com.visoris.backend.appointments.dto.{AppointmentResponse, CreateAppointm
 import com.visoris.backend.appointments.repository.AppointmentRepository
 import com.visoris.backend.clinics.repository.DoctorClinicRepository
 import com.visoris.backend.patients.repository.PatientRepository
+import com.visoris.backend.shared.utils.SecurityUtils
 import doobie.ConnectionIO
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
@@ -47,6 +48,10 @@ object AppointmentService:
     paymentStatus: PaymentStatus = PaymentStatus.UNPAID
   )
 
+  val MaxPrice: BigDecimal = BigDecimal("99999999.99")
+  val MinScheduledAt: Instant = Instant.parse("1900-01-01T00:00:00Z")
+  val MaxScheduledAt: Instant = Instant.parse("2100-12-31T23:59:59Z")
+
   def validateCreateRequest(request: CreateAppointmentRequest): Either[List[ValidationError], ValidCreateAppointment] =
     val clinicErrors =
       if request.clinicId <= 0 then List(ValidationError("clinic_id", "ID da clínica inválido.")) else Nil
@@ -54,14 +59,20 @@ object AppointmentService:
       if request.patientId <= 0 then List(ValidationError("patient_id", "ID do paciente inválido.")) else Nil
     val scheduledAtErrors = request.scheduledAt match
       case Left(msg) => List(ValidationError("scheduled_at", msg))
+      case Right(ts) if ts.isBefore(MinScheduledAt) || ts.isAfter(MaxScheduledAt) =>
+        List(ValidationError("scheduled_at", "Data e hora fora do intervalo permitido (1900 a 2100)."))
       case Right(_)  => Nil
     val proc = request.sanitizedProcedureName
     val procErrors =
       if proc.isEmpty then List(ValidationError("procedure_name", "Nome do procedimento não pode ser vazio."))
+      else if SecurityUtils.containsNullByte(proc) then
+        List(ValidationError("procedure_name", "Nome do procedimento contém caracteres inválidos."))
       else if proc.length > 255 then List(ValidationError("procedure_name", "Nome do procedimento deve ter no máximo 255 caracteres."))
       else Nil
     val priceErrors = request.price match
       case Some(p) if p < BigDecimal(0) => List(ValidationError("price", "O preço não pode ser negativo."))
+      case Some(p) if p > MaxPrice => List(ValidationError("price", "O preço excede o valor máximo permitido (99999999.99)."))
+      case Some(p) if p.scale > 2 => List(ValidationError("price", "O preço deve ter no máximo 2 casas decimais."))
       case _ => Nil
 
     val allErrors = clinicErrors ++ patientErrors ++ scheduledAtErrors ++ procErrors ++ priceErrors

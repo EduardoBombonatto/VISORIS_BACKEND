@@ -1,0 +1,25 @@
+$kind: http-request
+name: 'PROBE #7: POST /appointments (price DECIMAL(10,2) overflow)'
+method: POST
+url: '{{base_url}}/api/v1/appointments'
+order: 2000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"clinic_id":{{clinicA_id}},"patient_id":{{patientA_id}},"scheduled_at":"2026-12-02T14:00:00Z","procedure_name":"Overflow Test","price":999999999.99}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Server does not crash with 500', () => {
+        pm.expect(pm.response.code).to.be.below(500);
+      });
+
+      pm.test('Price overflow should be rejected with 400 (not 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

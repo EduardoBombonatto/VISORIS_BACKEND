@@ -6,6 +6,7 @@ import com.visoris.backend.iam.domain.{RefreshToken, User}
 import com.visoris.backend.iam.dto.{LoginRequest, ValidationError}
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.shared.auth.{CustomClaims, OpaqueTokenGenerator, PasswordHasher, TokenService}
+import com.visoris.backend.shared.utils.SecurityUtils
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
 import org.typelevel.log4cats.Logger
@@ -70,22 +71,13 @@ object AuthService:
     refreshTokenRepo: RefreshTokenRepository[F]
   ): AuthService[F] = new AuthService[F]:
 
-    private def maskEmail(email: String): String =
-      val parts = email.split("@")
-      if parts.length == 2 then
-        val local = parts(0)
-        val domain = parts(1)
-        if local.length <= 2 then s"$local**@$domain"
-        else s"${local.take(2)}**@$domain"
-      else email
-
     def login(
       request: LoginRequest,
       deviceInfo: Option[String],
       ipAddress: Option[String]
     ): F[Either[LoginError, LoginResult]] =
-      val normalizedEmail = request.email.toLowerCase
-      val masked = maskEmail(normalizedEmail)
+      val normalizedEmail = request.email.trim.toLowerCase
+      val masked = SecurityUtils.maskEmail(normalizedEmail)
       val refreshExpiresTime = 7 * 24 * 60 * 60
 
       val validationErrors = request.validate
@@ -96,7 +88,8 @@ object AuthService:
         Logger[F].info(s"Login attempt for email=$masked") *>
           userRepo.findByEmail(normalizedEmail).transact(transactor).flatMap {
             case None =>
-              Logger[F].info(s"Login rejected — email not found: $masked") *>
+              PasswordHasher.verifyDummy[F](request.password) *>
+                Logger[F].info(s"Login rejected — email not found: $masked") *>
                 Async[F].pure(Left(LoginError.InvalidCredentials))
             case Some(user) =>
               PasswordHasher.verify[F](request.password, user.passwordHash).flatMap {
@@ -126,63 +119,61 @@ object AuthService:
             case _ => Async[F].unit
           }
 
-    private val ReuseGraceSeconds = 60
-
-    private def reuseWithinGrace(rt: RefreshToken): Boolean =
-      rt.revokedReason.contains("ROTATION") &&
-        rt.revokedAt.exists(_.isAfter(Instant.now.minusSeconds(ReuseGraceSeconds)))
-
     def refresh(cookieToken: String): F[Either[RefreshError, RefreshResult]] =
       Logger[F].info("Refresh attempt") *>
         refreshTokenRepo.findByToken(cookieToken).transact(transactor).flatMap {
           case None =>
             Logger[F].info("Refresh rejected — token unknown") *>
               Async[F].pure(Left(RefreshError.Unknown))
-          case Some(rt) if rt.isRevoked && !reuseWithinGrace(rt) =>
+          case Some(rt) if rt.isRevoked =>
             Logger[F].warn(s"Refresh rejected — token already revoked (possible theft); revoking all sessions for user=${rt.userId}") *>
               refreshTokenRepo.revokeAllByUserId(rt.userId).transact(transactor) *>
               Async[F].pure(Left(RefreshError.Revoked))
-          case Some(rt) if rt.isRevoked =>
-            Logger[F].warn(s"Refresh — revoked token reused within grace window (possible concurrent rotation); rotating again for user=${rt.userId}") *>
-              rotate(rt)
           case Some(rt) if rt.expiresAt.isBefore(Instant.now) =>
             Logger[F].info("Refresh rejected — token expired") *>
               Async[F].pure(Left(RefreshError.Expired))
           case Some(rt) =>
-            rotate(rt)
+            rotate(rt, cookieToken)
         }.flatTap {
           case Left(RefreshError.Internal(msg)) =>
             Logger[F].error(s"Refresh internal error: $msg")
           case _ => Async[F].unit
         }
 
-    private def rotate(rt: RefreshToken): F[Either[RefreshError, RefreshResult]] =
-      for
-        user <- userRepo.findById(rt.userId).transact(transactor)
-        now <- Async[F].delay(Instant.now)
-        accessToken <- tokenService.createAccessToken[F](
-          CustomClaims(
-            userId = rt.userId.toString,
-            email = user.fold("")(_.email),
-            roles = List("DOCTOR"),
-            tokenType = "ACCESS"
-          )
-        )
-        newRefreshToken <- OpaqueTokenGenerator.generate[F]
-        newExpires = now.plusSeconds(7 * 24 * 60 * 60)
-        _ <- (for
-          _ <- refreshTokenRepo.revokeByToken(rt.token, "ROTATION")
-          _ <- refreshTokenRepo.create(rt.userId, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress)
-        yield ()).transact(transactor)
-        _ <- Logger[F].info(s"Refresh successful for user=${rt.userId}")
-      yield Right(RefreshResult(accessToken, 900, newRefreshToken))
+    private def rotate(rt: RefreshToken, rawToken: String): F[Either[RefreshError, RefreshResult]] =
+      userRepo.findById(rt.userId).transact(transactor).flatMap {
+        case None =>
+          Logger[F].warn(s"Refresh rejected — user not found for userId=${rt.userId}") *>
+            Async[F].pure(Left(RefreshError.Unknown))
+        case Some(user) =>
+          for
+            now <- Async[F].delay(Instant.now)
+            accessToken <- tokenService.createAccessToken[F](
+              CustomClaims(
+                userId = user.id.toString,
+                email = user.email,
+                roles = List("DOCTOR"),
+                tokenType = "ACCESS"
+              )
+            )
+            newRefreshToken <- OpaqueTokenGenerator.generate[F]
+            newExpires = now.plusSeconds(7 * 24 * 60 * 60)
+            _ <- (for
+              _ <- refreshTokenRepo.revokeByToken(rawToken, "ROTATION")
+              _ <- refreshTokenRepo.create(user.id, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress)
+            yield ()).transact(transactor)
+            _ <- Logger[F].info(s"Refresh successful for user=${user.id}")
+          yield Right(RefreshResult(accessToken, 900, newRefreshToken))
+      }
 
     def session(accessToken: Option[String], refreshToken: Option[String]): F[Either[SessionError, SessionResult]] =
       accessToken match
         case Some(token) =>
           tokenService.validateToken[F](token, "ACCESS").flatMap {
             case Some(claims) =>
-              loadSession(claims.userId.toLong, None, None)
+              claims.userId.toLongOption match
+                case Some(uid) => loadSession(uid, None, None)
+                case None      => refreshAndLoad(refreshToken)
             case None =>
               refreshAndLoad(refreshToken)
           }

@@ -44,6 +44,8 @@ object TokenService:
     def validateToken[F[_]: Sync](token: String, expectedType: String): F[Option[CustomClaims]] =
       Sync[F].delay {
         JwtCirce.decode(token, secretKey, Seq(algorithm)).toOption.flatMap { claim =>
-          decode[CustomClaims](claim.content).toOption.filter(_.tokenType == expectedType)
+          if claim.issuer.contains(issuer) then
+            decode[CustomClaims](claim.content).toOption.filter(_.tokenType == expectedType)
+          else None
         }
       }

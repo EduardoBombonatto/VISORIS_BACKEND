@@ -1,0 +1,21 @@
+$kind: http-request
+name: 'PUT /templates/:id (empty body -> 400)'
+method: PUT
+url: '{{base_url}}/api/v1/templates/{{templateA_id}}'
+order: 17000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 400 Bad Request (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

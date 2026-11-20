@@ -12,10 +12,14 @@ import com.visoris.backend.patients.repository.PatientRepository
 import com.visoris.backend.reports.domain.{ReportImage, ReportWithImages}
 import com.visoris.backend.reports.dto.{CreateReportRequest, ReportImageRequest, UpdateReportRequest, ValidationError}
 import com.visoris.backend.reports.repository.{ReportImageRepository, ReportRepository}
+import com.visoris.backend.shared.utils.SecurityUtils
 import doobie.ConnectionIO
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
 import io.circe.Json
+import java.net.URI
+import java.sql.SQLException
+import scala.util.Try
 
 trait ReportService[F[_]]:
   def getByAppointmentId(appointmentId: Long, userId: Long): F[Either[ReportsError, ReportWithImages]]
@@ -28,6 +32,23 @@ object ReportService:
 
   val MaxImageUrlLength = 1024
   val MaxCaptionLength  = 500
+  val MaxContentLength  = 500000
+
+  private val BlockedImageHosts: Set[String] = Set(
+    "169.254.169.254",
+    "metadata.google.internal",
+    "metadata.goog"
+  )
+
+  private def isSafeImageUrl(raw: String): Boolean =
+    if SecurityUtils.containsNullByte(raw) then false
+    else
+      Try(new URI(raw)).toOption.exists { uri =>
+        val scheme = Option(uri.getScheme).map(_.toLowerCase)
+        val host = Option(uri.getHost).map(_.toLowerCase)
+        scheme.exists(s => s == "https" || s == "http") &&
+        host.exists(h => h.nonEmpty && !BlockedImageHosts.contains(h) && !h.startsWith("169.254."))
+      }
 
   final case class ValidCreateReport(appointmentId: Long, content: String)
 
@@ -37,6 +58,10 @@ object ReportService:
       case _                  => List(ValidationError("appointment_id", "O campo 'appointment_id' é obrigatório."))
 
     val contentErrors = request.content match
+      case Some(c) if SecurityUtils.containsNullByte(c) =>
+        List(ValidationError("content", "O campo 'content' contém caracteres inválidos."))
+      case Some(c) if c.length > MaxContentLength =>
+        List(ValidationError("content", s"O campo 'content' não pode ter mais de $MaxContentLength caracteres."))
       case Some(_) => Nil
       case None    => List(ValidationError("content", "O campo 'content' é obrigatório."))
 
@@ -46,6 +71,10 @@ object ReportService:
 
   def validateUpdateRequest(request: UpdateReportRequest): Either[List[ValidationError], String] =
     request.content match
+      case Some(c) if SecurityUtils.containsNullByte(c) =>
+        Left(List(ValidationError("content", "O campo 'content' contém caracteres inválidos.")))
+      case Some(c) if c.length > MaxContentLength =>
+        Left(List(ValidationError("content", s"O campo 'content' não pode ter mais de $MaxContentLength caracteres.")))
       case Some(c) => Right(c)
       case None    => Left(List(ValidationError("content", "O campo 'content' é obrigatório.")))
 
@@ -55,9 +84,13 @@ object ReportService:
       if sanitized.imageUrl.isEmpty then List(ValidationError("image_url", "A URL da imagem é obrigatória."))
       else if sanitized.imageUrl.length > MaxImageUrlLength then
         List(ValidationError("image_url", s"A URL da imagem não pode ter mais de $MaxImageUrlLength caracteres."))
+      else if !isSafeImageUrl(sanitized.imageUrl) then
+        List(ValidationError("image_url", "URL da imagem inválida. Apenas URLs HTTP/HTTPS válidas são permitidas."))
       else Nil
 
     val captionErrors = sanitized.caption match
+      case Some(c) if SecurityUtils.containsNullByte(c) =>
+        List(ValidationError("caption", "A legenda contém caracteres inválidos."))
       case Some(c) if c.length > MaxCaptionLength =>
         List(ValidationError("caption", s"A legenda não pode ter mais de $MaxCaptionLength caracteres."))
       case _ => Nil
@@ -140,7 +173,13 @@ object ReportService:
             )
           yield ReportWithImages(created, Nil)
 
-          program.value.transact(transactor)
+          program.value.transact(transactor).attempt.map {
+            case Right(res) => res
+            case Left(e: SQLException) if e.getSQLState == "23505" =>
+              Left(ReportsError.Conflict("Já existe um laudo associado a este agendamento."))
+            case Left(_) =>
+              Left(ReportsError.Internal("Erro interno ao criar rascunho de laudo."))
+          }
 
     def updateContent(id: Long, request: UpdateReportRequest, userId: Long): F[Either[ReportsError, ReportWithImages]] =
       validateUpdateRequest(request) match
@@ -155,7 +194,7 @@ object ReportService:
               ReportsError.Conflict("Laudo já assinado não pode ser alterado.")
             )
             updatedOpt <- EitherT.right[ReportsError](reportRepo.updateContent(id, userId, newContent))
-            updated    <- EitherT.fromOption[ConnectionIO](updatedOpt, ReportsError.NotFound)
+            updated    <- EitherT.fromOption[ConnectionIO](updatedOpt, ReportsError.Conflict("Laudo já assinado não pode ser alterado."))
             images     <- EitherT.right[ReportsError](reportImageRepo.findByReportId(id))
           yield ReportWithImages(updated, images)
 
@@ -190,7 +229,7 @@ object ReportService:
           ReportsError.Conflict("Laudo já foi assinado anteriormente.")
         )
         signedOpt <- EitherT.right[ReportsError](reportRepo.sign(id, userId))
-        signed    <- EitherT.fromOption[ConnectionIO](signedOpt, ReportsError.NotFound)
+        signed    <- EitherT.fromOption[ConnectionIO](signedOpt, ReportsError.Conflict("Laudo já foi assinado anteriormente."))
         _ <- EitherT.right[ReportsError](
           appointmentRepo.updateStatus(signed.appointmentId, userId, None, Some(ReportStatus.COMPLETED), None)
         )

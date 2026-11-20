@@ -1,0 +1,41 @@
+$kind: http-request
+name: 'POST /clinics (User A creates Clinic A)'
+method: POST
+url: '{{base_url}}/api/v1/clinics'
+order: 4000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"name":"Clinica Audit A","cnpj":"{{clinicA_cnpj}}","phone":"11988887777","address":"Rua Teste 100"}
+scripts:
+  - type: beforeRequest
+    language: text/javascript
+    code: |-
+      function genCnpj() {
+        const base = [];
+        for (let i = 0; i < 8; i++) base.push(Math.floor(Math.random() * 9));
+        base.push(0, 0, 0, 1);
+        const w1 = [5,4,3,2,9,8,7,6,5,4,3,2];
+        const w2 = [6,5,4,3,2,9,8,7,6,5,4,3,2];
+        let s1 = 0; for (let i = 0; i < 12; i++) s1 += base[i] * w1[i];
+        const d1 = (s1 % 11) < 2 ? 0 : 11 - (s1 % 11);
+        base.push(d1);
+        let s2 = 0; for (let i = 0; i < 13; i++) s2 += base[i] * w2[i];
+        const d2 = (s2 % 11) < 2 ? 0 : 11 - (s2 % 11);
+        base.push(d2);
+        return base.join('');
+      }
+      pm.collectionVariables.set('clinicA_cnpj', genCnpj());
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Clinic A created (201)', () => pm.expect(pm.response.code).to.eql(201));
+      const body = pm.response.json();
+      if (body && body.data && body.data.clinic && body.data.clinic.id) {
+        pm.collectionVariables.set('clinicA_id', String(body.data.clinic.id));
+      }

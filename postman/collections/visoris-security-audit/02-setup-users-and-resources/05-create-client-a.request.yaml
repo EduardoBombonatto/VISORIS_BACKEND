@@ -1,0 +1,37 @@
+$kind: http-request
+name: 'POST /clients (User A creates Client A)'
+method: POST
+url: '{{base_url}}/api/v1/clients'
+order: 5000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"full_name":"Tutor Audit A","document_cpf":"{{clientA_cpf}}","email":"tutor.a.{{run_id}}@visoris.dev","phone":"1191{{run_id}}"}
+scripts:
+  - type: beforeRequest
+    language: text/javascript
+    code: |-
+      function genCpf() {
+        const d = [];
+        for (let i = 0; i < 9; i++) d.push(Math.floor(Math.random() * 9));
+        if (new Set(d).size === 1) d[0] = (d[0] + 1) % 10;
+        let s1 = 0; for (let i = 0; i < 9; i++) s1 += d[i] * (10 - i);
+        const r1 = (s1 * 10) % 11; d.push(r1 === 10 ? 0 : r1);
+        let s2 = 0; for (let i = 0; i < 10; i++) s2 += d[i] * (11 - i);
+        const r2 = (s2 * 10) % 11; d.push(r2 === 10 ? 0 : r2);
+        return d.join('');
+      }
+      pm.collectionVariables.set('clientA_cpf', genCpf());
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Client A created (201)', () => pm.expect(pm.response.code).to.eql(201));
+      const body = pm.response.json();
+      if (body && body.data && body.data.id) {
+        pm.collectionVariables.set('clientA_id', String(body.data.id));
+      }

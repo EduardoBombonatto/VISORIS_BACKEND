@@ -1,0 +1,28 @@
+$kind: http-request
+name: 'POST /auth/register (User B)'
+method: POST
+url: '{{base_url}}/api/v1/auth/register'
+order: 3000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+body:
+  type: json
+  content: |-
+    {"fullName":"Dr. Audit B","email":"{{userB_email}}","password":"Strong!Pass1","professionalDocument":"{{userB_doc}}"}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const setCookies = pm.response.headers.all().filter(h => h.key.toLowerCase() === 'set-cookie').map(h => h.value);
+      for (const c of setCookies) {
+        const mAcc = c.match(/^accessToken=([^;]+)/);
+        if (mAcc) pm.collectionVariables.set('userB_access', mAcc[1]);
+        const mRef = c.match(/^refreshToken=([^;]+)/);
+        if (mRef) pm.collectionVariables.set('userB_refresh', mRef[1]);
+      }
+
+      pm.test('User B registered (201)', () => {
+        pm.expect(pm.response.code).to.eql(201);
+        pm.expect(pm.collectionVariables.get('userB_access')).to.be.a('string').and.not.empty;
+      });

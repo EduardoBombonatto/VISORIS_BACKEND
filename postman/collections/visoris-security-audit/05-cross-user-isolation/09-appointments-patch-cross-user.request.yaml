@@ -1,0 +1,21 @@
+$kind: http-request
+name: 'PATCH /appointments/:id/status as User B (-> 404)'
+method: PATCH
+url: '{{base_url}}/api/v1/appointments/{{apptA_id}}/status'
+order: 9000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userB_access}}; refreshToken={{userB_refresh}}'
+body:
+  type: json
+  content: |-
+    {"exam_status":"CANCELLED"}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Cross-user returns 404 Not Found (never 403, 200, or 500)', () => {
+        pm.expect(pm.response.code).to.eql(404);
+      });

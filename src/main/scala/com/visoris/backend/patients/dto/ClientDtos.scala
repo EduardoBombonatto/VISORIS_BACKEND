@@ -1,5 +1,6 @@
 package com.visoris.backend.patients.dto
 
+import com.visoris.backend.shared.utils.SecurityUtils
 import io.circe.{Decoder, Encoder}
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import java.time.Instant
@@ -19,9 +20,9 @@ final case class ClientRequest(
   def sanitized: ClientRequest =
     ClientRequest(
       fullName = fullName.trim,
-      documentCpf = documentCpf.filter(_.isDigit),
+      documentCpf = SecurityUtils.asciiDigits(documentCpf),
       email = email.trim,
-      phone = phone.filter(_.isDigit)
+      phone = SecurityUtils.asciiDigits(phone)
     )
 
 object ClientRequest:

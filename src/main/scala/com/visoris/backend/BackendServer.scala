@@ -1,6 +1,6 @@
 package com.visoris.backend
 
-import cats.effect.{Async, Resource}
+import cats.effect.{Async, Ref, Resource}
 import cats.syntax.all.*
 import com.comcast.ip4s.*
 import com.visoris.backend.appointments.controller.AppointmentController
@@ -29,30 +29,87 @@ import fs2.io.net.Network
 import io.circe.syntax.*
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.headers.`Content-Type`
-import org.http4s.server.middleware.{CORS, CORSPolicy}
-import org.http4s.{HttpApp, MediaType}
+import org.http4s.server.middleware.{CORS, CORSPolicy, EntityLimiter}
+import org.http4s.{Header, Headers, HttpApp, MediaType, Response, Status}
 import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BackendServer:
 
+  private val MaxRequestBodyBytes: Long = 1048576L // 1 MB
+  private val AuthRateLimitWindowMs: Long = 60000L
+  private val AuthRateLimitMaxRequests: Int = 120
+  private val RateLimitedAuthPaths: Set[String] = Set(
+    "/api/v1/auth/login",
+    "/api/v1/auth/register",
+    "/api/v1/auth/refresh"
+  )
+
+  private val securityResponseHeaders: Headers = Headers(
+    Header.Raw(CIString("X-Content-Type-Options"), "nosniff"),
+    Header.Raw(CIString("X-Frame-Options"), "DENY"),
+    Header.Raw(CIString("Referrer-Policy"), "no-referrer"),
+    Header.Raw(CIString("Permissions-Policy"), "geolocation=(), microphone=(), camera=()"),
+    Header.Raw(CIString("Strict-Transport-Security"), "max-age=31536000; includeSubDomains")
+  )
+
   private def corsConfig(allowedOrigins: Set[CIString]): CORSPolicy =
     CORS.policy
       .withAllowOriginHostCi(allowedOrigins)
       .withAllowCredentials(true)
 
+  private def securityHeaders[F[_] : Async](app: HttpApp[F]): HttpApp[F] =
+    HttpApp[F] { req =>
+      app(req).map(_.putHeaders(securityResponseHeaders))
+    }
+
+  private def authRateLimiter[F[_] : Async](
+    stateRef: Ref[F, Map[String, List[Long]]]
+  )(app: HttpApp[F]): HttpApp[F] =
+    HttpApp[F] { req =>
+      val path = req.uri.path.renderString
+      if RateLimitedAuthPaths.contains(path) then
+        val clientKey = req.from.map(_.toString).getOrElse("unknown") + ":" + path
+        for
+          now <- Async[F].realTime.map(_.toMillis)
+          cutoff = now - AuthRateLimitWindowMs
+          allowed <- stateRef.modify { buckets =>
+            val recent = buckets.getOrElse(clientKey, Nil).filter(_ > cutoff)
+            if recent.size >= AuthRateLimitMaxRequests then
+              (buckets.updated(clientKey, recent), false)
+            else
+              val pruned = if buckets.size > 10000 then buckets.view.mapValues(_.filter(_ > cutoff)).filter(_._2.nonEmpty).toMap else buckets
+              (pruned.updated(clientKey, now :: recent), true)
+          }
+          resp <-
+            if allowed then app(req)
+            else
+              Async[F].pure(
+                Response[F](Status.TooManyRequests)
+                  .withEntity(ApiResponse.error("Muitas requisições. Tente novamente em instantes.", 429).asJson.noSpaces)
+                  .withContentType(`Content-Type`(MediaType.application.json))
+              )
+        yield resp
+      else app(req)
+    }
+
   private def errorHandler[F[_] : Async : Logger](app: HttpApp[F]): HttpApp[F] =
     HttpApp[F] { req =>
-      app(req).handleErrorWith { err =>
-        Logger[F].error(err)("Unhandled error processing request") *>
+      app(req).handleErrorWith {
+        case _: EntityLimiter.EntityTooLarge =>
           Async[F].pure(
-            org.http4s.Response[F](
-              org.http4s.Status.InternalServerError
-            ).withEntity(
-              ApiResponse.error("Erro interno do servidor. Tente novamente.", 500).asJson.noSpaces
-            ).withContentType(`Content-Type`(MediaType.application.json))
+            Response[F](Status.PayloadTooLarge)
+              .withEntity(ApiResponse.error("Corpo da requisição excede o limite máximo permitido.", 413).asJson.noSpaces)
+              .withContentType(`Content-Type`(MediaType.application.json))
           )
+        case err =>
+          Logger[F].error(err)("Unhandled error processing request") *>
+            Async[F].pure(
+              Response[F](Status.InternalServerError)
+                .withEntity(ApiResponse.error("Erro interno do servidor. Tente novamente.", 500).asJson.noSpaces)
+                .withContentType(`Content-Type`(MediaType.application.json))
+            )
       }
     }
 
@@ -106,9 +163,20 @@ object BackendServer:
       )
       reportsRoutes = authMiddleware(ReportController.routes[F](reportService))
 
+      rateLimitState <- Resource.eval(Ref.of[F, Map[String, List[Long]]](Map.empty))
+
       authRoutes = AuthController.routes[F](registrationService, authService)
-      docsRoutes = DocsController.routes[F]
-      httpApp = corsConfig(config.cors.allowedOrigins)(errorHandler((authRoutes <+> docsRoutes <+> clinicsRoutes <+> patientsModuleRoutes <+> appointmentsRoutes <+> templatesRoutes <+> reportsRoutes).orNotFound))
+      docsRoutes = DocsController.routes[F](config.enableDocs)
+      baseApp = (authRoutes <+> docsRoutes <+> clinicsRoutes <+> patientsModuleRoutes <+> appointmentsRoutes <+> templatesRoutes <+> reportsRoutes).orNotFound
+      httpApp = securityHeaders(
+        corsConfig(config.cors.allowedOrigins)(
+          errorHandler(
+            authRateLimiter(rateLimitState)(
+              EntityLimiter.httpApp(baseApp, MaxRequestBodyBytes)
+            )
+          )
+        )
+      )
 
       _ <-
         EmberServerBuilder.default[F]

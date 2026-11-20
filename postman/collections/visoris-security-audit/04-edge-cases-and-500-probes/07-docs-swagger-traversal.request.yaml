@@ -1,0 +1,17 @@
+$kind: http-request
+name: 'PROBE #14: GET /docs/swagger-ui/.. traversal'
+method: GET
+url: '{{base_url}}/api/v1/docs/swagger-ui/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2flogback.xml'
+order: 7000
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Server does not crash with 500', () => {
+        pm.expect(pm.response.code).to.be.below(500);
+      });
+
+      pm.test('Path traversal blocked (404/400) and does not leak logback.xml', () => {
+        pm.expect([400, 404]).to.include(pm.response.code);
+        pm.expect(pm.response.text()).to.not.include('<configuration>');
+      });

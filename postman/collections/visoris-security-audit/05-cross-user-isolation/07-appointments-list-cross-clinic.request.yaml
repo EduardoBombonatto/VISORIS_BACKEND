@@ -1,0 +1,18 @@
+$kind: http-request
+name: 'GET /appointments?clinicId=A as User B (-> 404)'
+method: GET
+url: '{{base_url}}/api/v1/appointments?clinicId={{clinicA_id}}'
+order: 7000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken={{userB_access}}; refreshToken={{userB_refresh}}'
+queryParams:
+  - key: 'clinicId'
+    value: '{{clinicA_id}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Cross-user returns 404 Not Found (never 403, 200, or 500)', () => {
+        pm.expect(pm.response.code).to.eql(404);
+      });

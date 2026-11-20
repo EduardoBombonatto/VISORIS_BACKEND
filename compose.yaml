@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ==========================================
   # 1. Nossa API em Scala
@@ -28,7 +26,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_DATABASE}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -43,8 +41,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     ports:
-      - "9000:9000" # Porta da API (usada pelo backend)
-      - "9001:9001" # Porta do painel de administração web
+      - "127.0.0.1:9000:9000" # Porta da API (usada pelo backend)
+      - "127.0.0.1:9001:9001" # Porta do painel de administração web
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data

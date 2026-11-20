@@ -27,10 +27,15 @@ object AuthMiddleware:
           case Some(token) =>
             tokenService.validateToken[F](token, "ACCESS").flatMap {
               case Some(claims) =>
-                userRepo.findById(claims.userId.toLong).transact(transactor).map {
-                  case Some(user) => Right(user)
-                  case None       => Left("Usuário não encontrado")
-                }
+                claims.userId.toLongOption match
+                  case Some(uid) =>
+                    userRepo.findById(uid).transact(transactor).map {
+                      case Some(user) => Right(user)
+                      case None       => Left("Usuário não encontrado")
+                    }
+                  case None =>
+                    Logger[F].warn("Token validation failed — non-numeric userId claim") *>
+                      (Left("Token JWT inválido ou expirado"): Either[String, User]).pure[F]
               case None =>
                 Logger[F].warn("Token validation failed") *>
                   (Left("Token JWT inválido ou expirado"): Either[String, User]).pure[F]

@@ -72,7 +72,7 @@ object ReportRepository:
       sql"""UPDATE reports
             SET content = $content,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $id AND user_id = $userId
+            WHERE id = $id AND user_id = $userId AND signed_at IS NULL
             RETURNING id, appointment_id, user_id, attendance_location_name,
                       patient_snapshot, clinic_snapshot, content, pdf_url,
                       signed_at, created_at, updated_at"""
@@ -83,7 +83,7 @@ object ReportRepository:
       sql"""UPDATE reports
             SET signed_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $id AND user_id = $userId
+            WHERE id = $id AND user_id = $userId AND signed_at IS NULL
             RETURNING id, appointment_id, user_id, attendance_location_name,
                       patient_snapshot, clinic_snapshot, content, pdf_url,
                       signed_at, created_at, updated_at"""

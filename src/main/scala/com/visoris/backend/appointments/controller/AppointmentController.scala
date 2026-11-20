@@ -34,7 +34,19 @@ object AppointmentController:
 
     object OptionalStartDateQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("startDate")
     object OptionalEndDateQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("endDate")
-    object OptionalClinicIdQueryParamMatcher extends OptionalQueryParamDecoderMatcher[Long]("clinicId")
+    object OptionalClinicIdQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("clinicId")
+
+    def parseOptionalInstant(field: String, raw: Option[String]): Either[ValidationError, Option[Instant]] =
+      raw match
+        case None => Right(None)
+        case Some(v) =>
+          Try(Instant.parse(v.trim)).toEither
+            .left.map(_ => ValidationError(field, s"Formato de data inválido para '$field'. Formato esperado: ISO 8601."))
+            .flatMap { ts =>
+              if ts.isBefore(AppointmentService.MinScheduledAt) || ts.isAfter(AppointmentService.MaxScheduledAt) then
+                Left(ValidationError(field, s"Data fora do intervalo permitido para '$field' (1900 a 2100)."))
+              else Right(Some(ts))
+            }
 
     AuthedRoutes.of[User, F] {
       case req @ POST -> Root / "api" / "v1" / "appointments" as user =>
@@ -60,34 +72,31 @@ object AppointmentController:
       case GET -> Root / "api" / "v1" / "appointments" :?
           OptionalStartDateQueryParamMatcher(rawStartDate) +&
           OptionalEndDateQueryParamMatcher(rawEndDate) +&
-          OptionalClinicIdQueryParamMatcher(clinicId) as user =>
-        val startInstantEither = rawStartDate match
-          case Some(s) => Try(Instant.parse(s.trim)).toEither.left.map(_ => ValidationError("startDate", s"Formato de data inválido: '$s'. Formato esperado: ISO 8601.")).map(Some(_))
-          case None    => Right(None)
+          OptionalClinicIdQueryParamMatcher(rawClinicId) as user =>
+        val startInstantEither = parseOptionalInstant("startDate", rawStartDate)
+        val endInstantEither = parseOptionalInstant("endDate", rawEndDate)
+        val clinicIdEither = rawClinicId match
+          case None => Right(None)
+          case Some(v) =>
+            v.trim.toLongOption
+              .toRight(ValidationError("clinicId", "Parâmetro 'clinicId' deve ser um número inteiro válido."))
+              .map(Some(_))
 
-        val endInstantEither = rawEndDate match
-          case Some(e) => Try(Instant.parse(e.trim)).toEither.left.map(_ => ValidationError("endDate", s"Formato de data inválido: '$e'. Formato esperado: ISO 8601.")).map(Some(_))
-          case None    => Right(None)
-
-        (startInstantEither, endInstantEither) match
-          case (Left(err), Right(_)) =>
-            BadRequest(errorResponse(List(err)).asJson).map(_.withContentType(jsonContent))
-          case (Right(_), Left(err)) =>
-            BadRequest(errorResponse(List(err)).asJson).map(_.withContentType(jsonContent))
-          case (Left(err1), Left(err2)) =>
-            BadRequest(errorResponse(List(err1, err2)).asJson).map(_.withContentType(jsonContent))
-          case (Right(startOpt), Right(endOpt)) =>
-            service.listFiltered(user.id, startOpt, endOpt, clinicId).flatMap {
-              case Left(AppointmentsError.Validation(errors)) =>
-                BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
-              case Left(AppointmentsError.NotFound) =>
-                NotFound(ApiResponse.error("Clínica não encontrada.", 404).asJson).map(_.withContentType(jsonContent))
-              case Left(AppointmentsError.Internal(msg)) =>
-                InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
-              case Right(list) =>
-                Ok(ApiResponse.success("Agendamentos listados com sucesso.", AppointmentListResponse(list), 200).asJson)
-                  .map(_.withContentType(jsonContent))
-            }
+        val errors = List(startInstantEither.left.toOption, endInstantEither.left.toOption, clinicIdEither.left.toOption).flatten
+        if errors.nonEmpty then
+          BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
+        else
+          service.listFiltered(user.id, startInstantEither.toOption.flatten, endInstantEither.toOption.flatten, clinicIdEither.toOption.flatten).flatMap {
+            case Left(AppointmentsError.Validation(validationErrors)) =>
+              BadRequest(errorResponse(validationErrors).asJson).map(_.withContentType(jsonContent))
+            case Left(AppointmentsError.NotFound) =>
+              NotFound(ApiResponse.error("Clínica não encontrada.", 404).asJson).map(_.withContentType(jsonContent))
+            case Left(AppointmentsError.Internal(msg)) =>
+              InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
+            case Right(list) =>
+              Ok(ApiResponse.success("Agendamentos listados com sucesso.", AppointmentListResponse(list), 200).asJson)
+                .map(_.withContentType(jsonContent))
+          }
 
       case req @ PATCH -> Root / "api" / "v1" / "appointments" / LongVar(id) / "status" as user =>
         req.req.as[UpdateAppointmentStatusRequest].attempt.flatMap {

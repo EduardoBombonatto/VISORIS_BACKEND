@@ -1,0 +1,19 @@
+$kind: http-request
+name: 'POST /auth/register (weak password + disposable email -> 400)'
+method: POST
+url: '{{base_url}}/api/v1/auth/register'
+order: 2000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+body:
+  type: json
+  content: |-
+    {"fullName":"","email":"test@mailinator.com","password":"123","professionalDocument":""}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 400 Bad Request (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

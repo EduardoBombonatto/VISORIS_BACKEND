@@ -1,5 +1,6 @@
 package com.visoris.backend.clinics.dto
 
+import com.visoris.backend.shared.utils.SecurityUtils
 import io.circe.Decoder
 
 final case class ClinicRequest(
@@ -11,8 +12,8 @@ final case class ClinicRequest(
   def sanitized: ClinicRequest =
     ClinicRequest(
       name = name.trim,
-      cnpj = cnpj.map(_.filter(_.isDigit)).filter(_.nonEmpty),
-      phone = phone.map(_.filter(_.isDigit)).filter(_.nonEmpty),
+      cnpj = cnpj.map(SecurityUtils.asciiDigits).filter(_.nonEmpty),
+      phone = phone.map(SecurityUtils.asciiDigits).filter(_.nonEmpty),
       address = address.map(_.trim).filter(_.nonEmpty)
     )
 

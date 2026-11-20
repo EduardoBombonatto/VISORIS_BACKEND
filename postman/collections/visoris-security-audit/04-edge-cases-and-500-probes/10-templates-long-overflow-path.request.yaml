@@ -1,0 +1,15 @@
+$kind: http-request
+name: 'GET /templates/99999999999999999999999 (Long overflow)'
+method: GET
+url: '{{base_url}}/api/v1/templates/99999999999999999999999'
+order: 10000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Server does not crash with 500', () => {
+        pm.expect(pm.response.code).to.be.below(500);
+      });

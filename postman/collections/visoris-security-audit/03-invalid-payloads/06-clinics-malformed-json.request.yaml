@@ -1,0 +1,21 @@
+$kind: http-request
+name: 'POST /clinics (malformed JSON -> 400)'
+method: POST
+url: '{{base_url}}/api/v1/clinics'
+order: 6000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: text
+  content: |-
+    {bad json
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 400 Bad Request (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

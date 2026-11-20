@@ -1,0 +1,19 @@
+$kind: http-request
+name: 'POST /auth/login (malformed JSON -> 400)'
+method: POST
+url: '{{base_url}}/api/v1/auth/login'
+order: 3000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+body:
+  type: text
+  content: |-
+    not-json
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 400 Bad Request (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

@@ -1,0 +1,25 @@
+$kind: http-request
+name: 'PROBE #4: POST /reports/:id/images (javascript: URI)'
+method: POST
+url: '{{base_url}}/api/v1/reports/{{reportA_id}}/images'
+order: 5000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"image_url":"javascript:alert(1)","caption":"xss probe","display_order":0}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Server does not crash with 500', () => {
+        pm.expect(pm.response.code).to.be.below(500);
+      });
+
+      pm.test('Malicious javascript: image_url should be rejected with 400', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

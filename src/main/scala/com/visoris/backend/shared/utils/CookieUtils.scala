@@ -12,7 +12,7 @@ object CookieUtils:
       httpOnly = true,
       secure = secure,
       sameSite = Some(SameSite.Strict),
-      path = Some("/"),
+      path = Some("/api/v1/auth"),
       maxAge = Some(604800L)
     )
 
@@ -45,6 +45,6 @@ object CookieUtils:
       httpOnly = true,
       secure = secure,
       sameSite = Some(SameSite.Strict),
-      path = Some("/"),
+      path = Some("/api/v1/auth"),
       maxAge = Some(0L)
     )

@@ -1,0 +1,27 @@
+$kind: http-request
+name: 'PROBE #3: POST /clinics as User B with Clinic A CNPJ'
+method: POST
+url: '{{base_url}}/api/v1/clinics'
+order: 18000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userB_access}}; refreshToken={{userB_refresh}}'
+body:
+  type: json
+  content: |-
+    {"name":"Different Name","cnpj":"{{clinicA_cnpj}}"}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Server does not crash with 500', () => {
+        pm.expect(pm.response.code).to.be.below(500);
+      });
+
+      pm.test('User B should NOT auto-link and receive Clinic A data via CNPJ alone', () => {
+        const body = pm.response.text() || '';
+        pm.expect(pm.response.code, 'Auto-linked Clinic A with 200!').to.not.eql(200);
+        pm.expect(body).to.not.include('Clinica Audit A');
+      });

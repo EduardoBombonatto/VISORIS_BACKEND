@@ -2,6 +2,7 @@ package com.visoris.backend.iam.repository
 
 import cats.effect.{IO, Resource, Sync}
 import com.visoris.backend.iam.domain.User
+import com.visoris.backend.shared.utils.SecurityUtils
 import doobie.*
 import doobie.hikari.HikariTransactor
 import doobie.implicits.*
@@ -63,7 +64,8 @@ class RefreshTokenRepositorySpec extends CatsEffectSuite:
       yield
         assert(found.isDefined)
         assertEquals(found.get.userId, userId)
-        assertEquals(found.get.token, token)
+        assertEquals(found.get.token, SecurityUtils.sha256Hex(token))
+        assertNotEquals(found.get.token, token)
         assert(!found.get.isRevoked)
         assertEquals(found.get.deviceInfo, Some("test-agent"))
         assertEquals(found.get.ipAddress, Some("127.0.0.1"))

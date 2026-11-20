@@ -1,0 +1,15 @@
+$kind: http-request
+name: 'POST /auth/refresh (invalid token -> 401)'
+method: POST
+url: '{{base_url}}/api/v1/auth/refresh'
+order: 3000
+headers:
+  - key: 'Cookie'
+    value: 'refreshToken=invalid-opaque-token-123'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 401 Unauthorized (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(401);
+      });

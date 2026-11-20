@@ -1,0 +1,15 @@
+$kind: http-request
+name: 'POST /reports/:id/sign as User B (-> 404)'
+method: POST
+url: '{{base_url}}/api/v1/reports/{{reportA_id}}/sign'
+order: 17000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken={{userB_access}}; refreshToken={{userB_refresh}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Cross-user returns 404 Not Found (never 403, 200, or 500)', () => {
+        pm.expect(pm.response.code).to.eql(404);
+      });

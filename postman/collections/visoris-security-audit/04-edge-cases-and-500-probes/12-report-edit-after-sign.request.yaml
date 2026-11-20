@@ -1,0 +1,19 @@
+$kind: http-request
+name: 'PUT /reports/:id (edit signed report -> 409)'
+method: PUT
+url: '{{base_url}}/api/v1/reports/{{reportA_id}}'
+order: 12000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"content":"Tentativa de adulteracao"}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Editing signed report rejected with 409 Conflict', () => pm.expect(pm.response.code).to.eql(409));

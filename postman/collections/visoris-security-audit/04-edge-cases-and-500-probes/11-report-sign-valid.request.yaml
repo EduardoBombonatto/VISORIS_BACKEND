@@ -1,0 +1,13 @@
+$kind: http-request
+name: 'POST /reports/:id/sign (User A signs report -> 200)'
+method: POST
+url: '{{base_url}}/api/v1/reports/{{reportA_id}}/sign'
+order: 11000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Report signed successfully (200)', () => pm.expect(pm.response.code).to.eql(200));

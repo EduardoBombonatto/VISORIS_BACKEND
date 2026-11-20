@@ -3,6 +3,7 @@ package com.visoris.backend.templates.service
 import cats.data.EitherT
 import cats.effect.Async
 import cats.syntax.all.*
+import com.visoris.backend.shared.utils.SecurityUtils
 import com.visoris.backend.templates.domain.{Template, TemplateSummary}
 import com.visoris.backend.templates.dto.{CreateTemplateRequest, UpdateTemplateRequest, ValidationError}
 import com.visoris.backend.templates.repository.TemplateRepository
@@ -20,6 +21,7 @@ trait TemplateService[F[_]]:
 object TemplateService:
 
   val MaxTitleLength = 255
+  val MaxContentLength = 500000
 
   def validateCreateRequest(request: CreateTemplateRequest): Either[List[ValidationError], CreateTemplateRequest] =
     val sanitized = request.sanitized
@@ -27,11 +29,21 @@ object TemplateService:
 
     val titleErrors =
       if rawTitle.isEmpty then List(ValidationError("title", "Título do template é obrigatório."))
+      else if SecurityUtils.containsNullByte(rawTitle) then
+        List(ValidationError("title", "Título do template contém caracteres inválidos."))
       else if rawTitle.length > MaxTitleLength then
         List(ValidationError("title", s"Título não pode ter mais de $MaxTitleLength caracteres."))
       else Nil
 
-    if titleErrors.nonEmpty then Left(titleErrors)
+    val contentErrors =
+      if SecurityUtils.containsNullByte(sanitized.content) then
+        List(ValidationError("content", "Conteúdo do template contém caracteres inválidos."))
+      else if sanitized.content.length > MaxContentLength then
+        List(ValidationError("content", s"Conteúdo não pode ter mais de $MaxContentLength caracteres."))
+      else Nil
+
+    val allErrors = titleErrors ++ contentErrors
+    if allErrors.nonEmpty then Left(allErrors)
     else Right(sanitized)
 
   def validateUpdateRequest(request: UpdateTemplateRequest): Either[List[ValidationError], UpdateTemplateRequest] =
@@ -44,11 +56,20 @@ object TemplateService:
 
     val titleErrors = sanitized.title match
       case Some(t) if t.isEmpty => List(ValidationError("title", "Título do template não pode ser vazio."))
+      case Some(t) if SecurityUtils.containsNullByte(t) =>
+        List(ValidationError("title", "Título do template contém caracteres inválidos."))
       case Some(t) if t.length > MaxTitleLength =>
         List(ValidationError("title", s"Título não pode ter mais de $MaxTitleLength caracteres."))
       case _ => Nil
 
-    val allErrors = emptyBodyErrors ++ titleErrors
+    val contentErrors = sanitized.content match
+      case Some(c) if SecurityUtils.containsNullByte(c) =>
+        List(ValidationError("content", "Conteúdo do template contém caracteres inválidos."))
+      case Some(c) if c.length > MaxContentLength =>
+        List(ValidationError("content", s"Conteúdo não pode ter mais de $MaxContentLength caracteres."))
+      case _ => Nil
+
+    val allErrors = emptyBodyErrors ++ titleErrors ++ contentErrors
     if allErrors.nonEmpty then Left(allErrors)
     else Right(sanitized)
 

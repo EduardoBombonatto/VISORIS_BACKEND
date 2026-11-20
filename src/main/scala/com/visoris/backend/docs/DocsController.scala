@@ -47,24 +47,32 @@ object DocsController:
   private def jsonContent: `Content-Type` = `Content-Type`(MediaType.application.json)
 
   private def noStore: `Cache-Control` = `Cache-Control`(cats.data.NonEmptyList.one(CacheDirective.`no-store`))
+  private val safeAssetPattern = "^[a-zA-Z0-9._-]+$".r
 
   def routes[F[_]: Async]: HttpRoutes[F] =
-    val dsl = new Http4sDsl[F] {}
-    import dsl.*
+    routes[F](enabled = true)
 
-    HttpRoutes.of[F] {
-      case GET -> Root / "api" / "v1" / "docs" =>
-        Ok(htmlShell).map(_.withContentType(htmlContent).putHeaders(noStore))
+  def routes[F[_]: Async](enabled: Boolean): HttpRoutes[F] =
+    if !enabled then HttpRoutes.empty[F]
+    else
+      val dsl = new Http4sDsl[F] {}
+      import dsl.*
 
-      case GET -> Root / "api" / "v1" / "docs" / "" =>
-        Ok(htmlShell).map(_.withContentType(htmlContent).putHeaders(noStore))
+      HttpRoutes.of[F] {
+        case GET -> Root / "api" / "v1" / "docs" =>
+          Ok(htmlShell).map(_.withContentType(htmlContent).putHeaders(noStore))
 
-      case GET -> Root / "api" / "v1" / "docs" / "openapi.json" =>
-        Ok(OpenApiSpec.json.noSpaces).map(_.withContentType(jsonContent).putHeaders(noStore))
+        case GET -> Root / "api" / "v1" / "docs" / "" =>
+          Ok(htmlShell).map(_.withContentType(htmlContent).putHeaders(noStore))
 
-      case req @ GET -> Root / "api" / "v1" / "docs" / "swagger-ui" / path =>
-        StaticFile
-          .fromResource[F](s"$swaggerUiBase/$path", Some(req))
-          .map(_.putHeaders(noStore))
-          .getOrElseF(NotFound())
-    }
+        case GET -> Root / "api" / "v1" / "docs" / "openapi.json" =>
+          Ok(OpenApiSpec.json.noSpaces).map(_.withContentType(jsonContent).putHeaders(noStore))
+
+        case req @ GET -> Root / "api" / "v1" / "docs" / "swagger-ui" / path =>
+          if safeAssetPattern.matches(path) && !path.contains("..") then
+            StaticFile
+              .fromResource[F](s"$swaggerUiBase/$path", Some(req))
+              .map(_.putHeaders(noStore))
+              .getOrElseF(NotFound())
+          else NotFound()
+      }

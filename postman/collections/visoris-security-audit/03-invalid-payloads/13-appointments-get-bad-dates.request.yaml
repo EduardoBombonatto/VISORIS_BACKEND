@@ -1,0 +1,20 @@
+$kind: http-request
+name: 'GET /appointments (invalid startDate/endDate -> 400)'
+method: GET
+url: '{{base_url}}/api/v1/appointments?startDate=invalid&endDate=invalid'
+order: 13000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+queryParams:
+  - key: 'startDate'
+    value: 'invalid'
+  - key: 'endDate'
+    value: 'invalid'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 400 Bad Request (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

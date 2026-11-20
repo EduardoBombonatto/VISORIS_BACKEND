@@ -104,7 +104,7 @@ object AppointmentRepository:
         JOIN patients p ON a.patient_id = p.id
         JOIN clients c ON p.client_id = c.id
         JOIN clinics cl ON a.clinic_id = cl.id
-      """ ++ filters ++ fr"ORDER BY a.scheduled_at ASC"
+      """ ++ filters ++ fr"ORDER BY a.scheduled_at ASC LIMIT 500"
 
       query.query[AppointmentWithDetails].to[List]
 

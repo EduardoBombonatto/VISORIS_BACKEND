@@ -1,0 +1,19 @@
+$kind: http-request
+name: 'PROBE #5: DELETE /patients/:id with linked appointment & signed report'
+method: DELETE
+url: '{{base_url}}/api/v1/patients/{{patientA_id}}'
+order: 19000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Server does not crash with 500', () => {
+        pm.expect(pm.response.code).to.be.below(500);
+      });
+
+      pm.test('Deleting patient with linked appointments should return 409 Conflict (not silent 200 cascade)', () => {
+        pm.expect(pm.response.code).to.eql(409);
+      });

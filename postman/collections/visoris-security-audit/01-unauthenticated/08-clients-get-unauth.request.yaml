@@ -1,0 +1,12 @@
+$kind: http-request
+name: 'GET /clients (no auth -> 401)'
+method: GET
+url: '{{base_url}}/api/v1/clients'
+order: 8000
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 401 Unauthorized (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(401);
+      });

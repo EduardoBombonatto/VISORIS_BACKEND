@@ -1,5 +1,6 @@
 package com.visoris.backend.iam.dto
 
+import com.visoris.backend.shared.utils.SecurityUtils
 import io.circe.Decoder
 import io.circe.generic.semiauto.deriveDecoder
 
@@ -25,6 +26,7 @@ final case class RegisterRequest(
       validateEmailFormat.toList ++
       validatePassword ++
       validateFieldLengths ++
+      validateControlChars ++
       validateDisposableEmail.toList
 
   private def validateRequiredFields: List[ValidationError] =
@@ -36,13 +38,14 @@ final case class RegisterRequest(
     ).flatten
 
   private def validateEmailFormat: Option[ValidationError] =
-    if emailRegex.matches(email) then None
+    if emailRegex.matches(email.trim) then None
     else Some(ValidationError("email", "Formato de e-mail inválido."))
 
   private def validatePassword: List[ValidationError] =
     List(
       Option.when(password.trim.isEmpty)(ValidationError("password", "Senha é obrigatória.")),
       Option.when(password.length < 8)(ValidationError("password", "A senha deve conter pelo menos 8 caracteres.")),
+      Option.when(password.length > 72)(ValidationError("password", "A senha deve conter no máximo 72 caracteres.")),
       Option.when(!password.exists(_.isUpper))(ValidationError("password", "A senha deve conter pelo menos uma letra maiúscula.")),
       Option.when(!password.exists(_.isLower))(ValidationError("password", "A senha deve conter pelo menos uma letra minúscula.")),
       Option.when(!password.exists(_.isDigit))(ValidationError("password", "A senha deve conter pelo menos um número.")),
@@ -57,8 +60,15 @@ final case class RegisterRequest(
       Option.when(professionalDocument.exists(_.length > 50))(ValidationError("professionalDocument", "Documento profissional excede o limite de 50 caracteres."))
     ).flatten
 
+  private def validateControlChars: List[ValidationError] =
+    List(
+      Option.when(SecurityUtils.containsNullByte(fullName))(ValidationError("fullName", "Nome completo contém caracteres inválidos.")),
+      Option.when(SecurityUtils.containsNullByte(email))(ValidationError("email", "E-mail contém caracteres inválidos.")),
+      Option.when(professionalDocument.exists(SecurityUtils.containsNullByte))(ValidationError("professionalDocument", "Documento profissional contém caracteres inválidos."))
+    ).flatten
+
   private def validateDisposableEmail: Option[ValidationError] =
-    val domain = email.split("@").lastOption.getOrElse("").toLowerCase
+    val domain = email.trim.split("@").lastOption.getOrElse("").toLowerCase
     if disposableDomains.contains(domain) then
       Some(ValidationError("email", "Por favor, use um e-mail profissional ou pessoal válido."))
     else None

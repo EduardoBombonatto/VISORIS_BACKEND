@@ -1,0 +1,13 @@
+$kind: http-request
+name: 'GET /auth/me (User A)'
+method: GET
+url: '{{base_url}}/api/v1/auth/me'
+order: 2000
+headers:
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('GET /auth/me succeeds (200)', () => pm.expect(pm.response.code).to.eql(200));

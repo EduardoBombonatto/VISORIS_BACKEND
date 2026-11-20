@@ -1,0 +1,21 @@
+$kind: http-request
+name: 'POST /patients (invalid enum + future birthDate -> 400)'
+method: POST
+url: '{{base_url}}/api/v1/patients'
+order: 10000
+headers:
+  - key: 'Content-Type'
+    value: 'application/json'
+  - key: 'Cookie'
+    value: 'accessToken={{userA_access}}; refreshToken={{userA_refresh}}'
+body:
+  type: json
+  content: |-
+    {"client_id":{{clientA_id}},"name":"","patient_type":"ALIEN","birth_date":"2099-01-01","biological_details":{}}
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('Returns 400 Bad Request (no 500)', () => {
+        pm.expect(pm.response.code).to.eql(400);
+      });

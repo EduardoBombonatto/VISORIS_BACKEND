@@ -1,8 +1,10 @@
 package com.visoris.backend.clinics.domain
 
+import com.visoris.backend.shared.utils.SecurityUtils
+
 object Cnpj:
 
-  def normalize(raw: String): String = raw.filter(_.isDigit)
+  def normalize(raw: String): String = SecurityUtils.asciiDigits(raw)
 
   def validate(raw: String): Either[String, String] =
     val digits = normalize(raw)

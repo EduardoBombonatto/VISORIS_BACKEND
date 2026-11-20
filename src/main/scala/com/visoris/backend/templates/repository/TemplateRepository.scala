@@ -44,7 +44,8 @@ object TemplateRepository:
       sql"""SELECT id, user_id, title, created_at
             FROM templates
             WHERE user_id = $userId
-            ORDER BY created_at DESC"""
+            ORDER BY created_at DESC
+            LIMIT 500"""
         .query[TemplateSummary]
         .to[List]
 
