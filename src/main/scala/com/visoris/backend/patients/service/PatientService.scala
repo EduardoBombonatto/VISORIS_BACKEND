@@ -51,6 +51,45 @@ object PatientService:
     biologicalDetails: Json
   )
 
+  private final case class PetBioFields(
+    age: Option[String],
+    breed: Option[String],
+    coatColor: Option[String]
+  )
+
+  private def extractPetBioFields(biologicalDetails: Json): PetBioFields =
+    val cursor = biologicalDetails.hcursor
+    val age = cursor.downField("age").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    val breed = cursor.downField("breed").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    val coatColor = cursor
+      .downField("coat_color")
+      .as[String]
+      .orElse(cursor.downField("coatColor").as[String])
+      .toOption
+      .map(_.trim)
+      .filter(_.nonEmpty)
+    PetBioFields(age, breed, coatColor)
+
+  private def validatePetFields(birthDate: Option[LocalDate], pet: PetBioFields): List[ValidationError] =
+    val birthOrAgeError =
+      if birthDate.isEmpty && pet.age.isEmpty then
+        List(ValidationError("birth_date", "Informe a data de nascimento ou a idade do animal."))
+      else if pet.age.exists(_.length > 100) then
+        List(ValidationError("age", "Idade não pode ter mais de 100 caracteres."))
+      else Nil
+
+    val breedError =
+      if pet.breed.isEmpty then List(ValidationError("breed", "Raça é obrigatória para o animal."))
+      else if pet.breed.exists(_.length > 100) then List(ValidationError("breed", "Raça não pode ter mais de 100 caracteres."))
+      else Nil
+
+    val coatColorError =
+      if pet.coatColor.isEmpty then List(ValidationError("coat_color", "Cor da pelagem é obrigatória para o animal."))
+      else if pet.coatColor.exists(_.length > 100) then List(ValidationError("coat_color", "Cor da pelagem não pode ter mais de 100 caracteres."))
+      else Nil
+
+    birthOrAgeError ++ breedError ++ coatColorError
+
   private def validatePatientFields(
     name: String,
     patientTypeEither: Either[String, PatientType],
@@ -59,7 +98,6 @@ object PatientService:
     invalidBirthDate: Boolean
   ): Either[List[ValidationError], (String, PatientType, Option[LocalDate], Json)] =
     val rawName = name.trim
-
     val nameErrors =
       if rawName.isEmpty then List(ValidationError("name", "Nome do paciente é obrigatório."))
       else if SecurityUtils.containsNullByte(rawName) then
@@ -68,84 +106,41 @@ object PatientService:
         List(ValidationError("name", s"Nome deve ter entre $MinNameLength e $MaxNameLength caracteres."))
       else Nil
 
-    val typeErrors = patientTypeEither match
-      case Left(msg) => List(ValidationError("patient_type", msg))
-      case Right(_)  => Nil
-
+    val typeErrors = patientTypeEither.left.toOption.map(ValidationError("patient_type", _)).toList
     val pType = patientTypeEither.toOption
 
-    val birthDateFormatErrors =
-      if invalidBirthDate then
-        List(ValidationError("birth_date", "Formato de data de nascimento inválido. Esperado: YYYY-MM-DD."))
-      else Nil
-
-    val birthDateFutureErrors = birthDate match
-      case Some(date) if date.isAfter(LocalDate.now()) =>
-        List(ValidationError("birth_date", "Data de nascimento não pode estar no futuro."))
-      case Some(date) if date.getYear < 1900 =>
-        List(ValidationError("birth_date", "Data de nascimento fora do intervalo permitido."))
-      case _ => Nil
+    val birthDateErrors =
+      (if invalidBirthDate then List(ValidationError("birth_date", "Formato de data de nascimento inválido. Esperado: YYYY-MM-DD.")) else Nil) ++
+        (birthDate match
+          case Some(date) if date.isAfter(LocalDate.now()) =>
+            List(ValidationError("birth_date", "Data de nascimento não pode estar no futuro."))
+          case Some(date) if date.getYear < 1900 =>
+            List(ValidationError("birth_date", "Data de nascimento fora do intervalo permitido."))
+          case _ => Nil)
 
     val serializedBio = biologicalDetails.noSpaces
     val bioFormatErrors =
-      if SecurityUtils.containsNullByte(serializedBio) then
+      if !biologicalDetails.isObject then
+        List(ValidationError("biological_details", "Detalhes biológicos devem ser um objeto JSON."))
+      else if SecurityUtils.containsNullByte(serializedBio) then
         List(ValidationError("biological_details", "Detalhes biológicos contêm caracteres inválidos."))
       else if serializedBio.length > MaxBiologicalDetailsBytes then
         List(ValidationError("biological_details", s"Detalhes biológicos excedem o limite máximo de $MaxBiologicalDetailsBytes bytes."))
       else Nil
 
+    val petFields = extractPetBioFields(biologicalDetails)
     val bioErrors = pType match
-      case Some(PatientType.PET) =>
-        val ageOpt = biologicalDetails.hcursor.downField("age").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-        val birthOrAgeError =
-          if birthDate.isEmpty && ageOpt.isEmpty then
-            List(ValidationError("birth_date", "Informe a data de nascimento ou a idade do animal."))
-          else if ageOpt.exists(_.length > 100) then
-            List(ValidationError("age", "Idade não pode ter mais de 100 caracteres."))
-          else Nil
+      case Some(PatientType.PET) => validatePetFields(birthDate, petFields)
+      case _                     => Nil
 
-        val breedOpt = biologicalDetails.hcursor.downField("breed").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-        val breedError =
-          if breedOpt.isEmpty then List(ValidationError("breed", "Raça é obrigatória para o animal."))
-          else if breedOpt.exists(_.length > 100) then List(ValidationError("breed", "Raça não pode ter mais de 100 caracteres."))
-          else Nil
-
-        val coatColorOpt = biologicalDetails.hcursor
-          .downField("coat_color")
-          .as[String]
-          .orElse(biologicalDetails.hcursor.downField("coatColor").as[String])
-          .toOption
-          .map(_.trim)
-          .filter(_.nonEmpty)
-
-        val coatColorError =
-          if coatColorOpt.isEmpty then List(ValidationError("coat_color", "Cor da pelagem é obrigatória para o animal."))
-          else if coatColorOpt.exists(_.length > 100) then List(ValidationError("coat_color", "Cor da pelagem não pode ter mais de 100 caracteres."))
-          else Nil
-
-        birthOrAgeError ++ breedError ++ coatColorError
-      case _ => Nil
-
-    val allErrors = nameErrors ++ typeErrors ++ birthDateFormatErrors ++ birthDateFutureErrors ++ bioFormatErrors ++ bioErrors
+    val allErrors = nameErrors ++ typeErrors ++ birthDateErrors ++ bioFormatErrors ++ bioErrors
     if allErrors.nonEmpty then Left(allErrors)
     else
       val baseObj = biologicalDetails.asObject.getOrElse(JsonObject.empty)
-      val breedOpt = biologicalDetails.hcursor.downField("breed").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-      val coatColorOpt = biologicalDetails.hcursor
-        .downField("coat_color")
-        .as[String]
-        .orElse(biologicalDetails.hcursor.downField("coatColor").as[String])
-        .toOption
-        .map(_.trim)
-        .filter(_.nonEmpty)
-      val ageOpt = biologicalDetails.hcursor.downField("age").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-
-      val withBreed = breedOpt.fold(baseObj)(b => baseObj.add("breed", Json.fromString(b)))
-      val withCoat = coatColorOpt.fold(withBreed)(c => withBreed.add("coat_color", Json.fromString(c)))
-      val withAge = ageOpt.fold(withCoat)(a => withCoat.add("age", Json.fromString(a)))
-      val sanitizedBio = Json.fromJsonObject(withAge)
-
-      Right((rawName, pType.get, birthDate, sanitizedBio))
+      val withBreed = petFields.breed.fold(baseObj)(b => baseObj.add("breed", Json.fromString(b)))
+      val withCoat = petFields.coatColor.fold(withBreed)(c => withBreed.add("coat_color", Json.fromString(c)))
+      val withAge = petFields.age.fold(withCoat)(a => withCoat.add("age", Json.fromString(a)))
+      Right((rawName, pType.get, birthDate, Json.fromJsonObject(withAge)))
 
   def validateRequest(request: PatientRequest): Either[List[ValidationError], ValidPatient] =
     val clientErrors =

@@ -1,8 +1,7 @@
 package com.visoris.backend.patients.repository
 
-import cats.effect.IO
-import cats.effect.Resource
-import cats.effect.Sync
+import cats.effect.{IO, Resource}
+import com.visoris.backend.TestSupport
 import com.visoris.backend.clinics.repository.ClinicRepository
 import com.visoris.backend.patients.domain.PatientType
 import doobie.hikari.HikariTransactor
@@ -10,28 +9,11 @@ import doobie.implicits.*
 import io.circe.Json
 import java.time.LocalDate
 import munit.CatsEffectSuite
-import org.flywaydb.core.Flyway
 
 class PatientRepositorySpec extends CatsEffectSuite:
 
-  private val dbUrl  = sys.env.getOrElse("DB_URL", "jdbc:postgresql://localhost:5432/visoris_db")
-  private val dbUser = sys.env.getOrElse("DB_USER", "postgres")
-  private val dbPass = sys.env.getOrElse("DB_PASSWORD", "Visoris@123.")
-
   private val transactorResource: Resource[IO, HikariTransactor[IO]] =
-    import doobie.util.ExecutionContexts
-    for
-      ce <- ExecutionContexts.fixedThreadPool[IO](4)
-      xa <- HikariTransactor.newHikariTransactor[IO](
-        "org.postgresql.Driver", dbUrl, dbUser, dbPass, ce
-      )
-      _ <- Resource.eval(runMigrations(xa))
-    yield xa
-
-  private def runMigrations(xa: HikariTransactor[IO]): IO[Unit] =
-    xa.configure { dataSource =>
-      Sync[IO].delay { Flyway.configure().dataSource(dataSource).load().migrate(); () }
-    }
+    TestSupport.postgresTransactor(4)
 
   test("insert, findById, findByClientId persist and map JSONB and ENUM correctly") {
     transactorResource.use { xa =>

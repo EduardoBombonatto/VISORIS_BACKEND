@@ -25,6 +25,7 @@ import com.visoris.backend.shared.dto.ApiResponse
 import com.visoris.backend.templates.controller.TemplateController
 import com.visoris.backend.templates.repository.TemplateRepository
 import com.visoris.backend.templates.service.TemplateService
+import doobie.implicits.*
 import fs2.io.net.Network
 import io.circe.syntax.*
 import org.http4s.ember.server.EmberServerBuilder
@@ -34,12 +35,15 @@ import org.http4s.{Header, Headers, HttpApp, MediaType, Response, Status}
 import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import scala.concurrent.duration.*
 
 object BackendServer:
 
   private val MaxRequestBodyBytes: Long = 1048576L // 1 MB
   private val AuthRateLimitWindowMs: Long = 60000L
   private val AuthRateLimitMaxRequests: Int = 120
+  private val RateLimitPruneThreshold: Int = 5000
+  private val RateLimitHardCap: Int = 10000
   private val RateLimitedAuthPaths: Set[String] = Set(
     "/api/v1/auth/login",
     "/api/v1/auth/register",
@@ -64,6 +68,9 @@ object BackendServer:
       app(req).map(_.putHeaders(securityResponseHeaders))
     }
 
+  private def pruneBuckets(buckets: Map[String, List[Long]], cutoff: Long): Map[String, List[Long]] =
+    buckets.view.mapValues(_.filter(_ > cutoff)).filter(_._2.nonEmpty).toMap
+
   private def authRateLimiter[F[_] : Async](
     stateRef: Ref[F, Map[String, List[Long]]]
   )(app: HttpApp[F]): HttpApp[F] =
@@ -75,12 +82,16 @@ object BackendServer:
           now <- Async[F].realTime.map(_.toMillis)
           cutoff = now - AuthRateLimitWindowMs
           allowed <- stateRef.modify { buckets =>
-            val recent = buckets.getOrElse(clientKey, Nil).filter(_ > cutoff)
+            val base =
+              if buckets.size >= RateLimitPruneThreshold then pruneBuckets(buckets, cutoff)
+              else buckets
+            val recent = base.getOrElse(clientKey, Nil).filter(_ > cutoff)
             if recent.size >= AuthRateLimitMaxRequests then
-              (buckets.updated(clientKey, recent), false)
+              (base.updated(clientKey, recent), false)
+            else if !base.contains(clientKey) && base.size >= RateLimitHardCap then
+              (base, false)
             else
-              val pruned = if buckets.size > 10000 then buckets.view.mapValues(_.filter(_ > cutoff)).filter(_._2.nonEmpty).toMap else buckets
-              (pruned.updated(clientKey, now :: recent), true)
+              (base.updated(clientKey, now :: recent), true)
           }
           resp <-
             if allowed then app(req)
@@ -93,6 +104,27 @@ object BackendServer:
         yield resp
       else app(req)
     }
+
+  private def periodicRateLimitCleanup[F[_] : Async](
+    stateRef: Ref[F, Map[String, List[Long]]]
+  ): F[Unit] =
+    (Async[F].sleep(60.seconds) *>
+      Async[F].realTime.map(_.toMillis).flatMap { now =>
+        stateRef.update(pruneBuckets(_, now - AuthRateLimitWindowMs))
+      }).foreverM
+
+  private def periodicExpiredTokenCleanup[F[_] : Async : Logger](
+    refreshTokenRepo: RefreshTokenRepository[F],
+    transactor: doobie.util.transactor.Transactor[F]
+  ): F[Unit] =
+    (Async[F].sleep(1.hour) *>
+      refreshTokenRepo.deleteExpired().transact(transactor).attempt.flatMap {
+        case Right(deleted) if deleted > 0 =>
+          Logger[F].info(s"Purged $deleted expired refresh token(s)")
+        case Right(_) => Async[F].unit
+        case Left(err) =>
+          Logger[F].warn(err)("Failed to purge expired refresh tokens")
+      }).foreverM
 
   private def errorHandler[F[_] : Async : Logger](app: HttpApp[F]): HttpApp[F] =
     HttpApp[F] { req =>
@@ -124,35 +156,35 @@ object BackendServer:
       _ <- Resource.eval(Database.runMigrations[F](transactor))
 
       tokenService = TokenService.make(config.jwtSecret.value)
-      userRepo = UserRepository.make[F](transactor)
-      refreshTokenRepo = RefreshTokenRepository.make[F](transactor)
+      userRepo = UserRepository.make[F]
+      refreshTokenRepo = RefreshTokenRepository.make[F]
       registrationService = RegistrationService.make[F](tokenService, transactor, userRepo, refreshTokenRepo)
       authService = AuthService.make[F](tokenService, transactor, userRepo, refreshTokenRepo)
       authMiddleware = AuthMiddleware.make[F](tokenService, userRepo, transactor)
 
-      clinicRepo = ClinicRepository.make[F](transactor)
-      doctorClinicRepo = DoctorClinicRepository.make[F](transactor)
+      clinicRepo = ClinicRepository.make[F]
+      doctorClinicRepo = DoctorClinicRepository.make[F]
       clinicsService = ClinicsService.make[F](clinicRepo, doctorClinicRepo, transactor)
       clinicsRoutes = authMiddleware(ClinicsController.routes[F](clinicsService))
 
-      clientRepo = ClientRepository.make[F](transactor)
-      patientRepo = PatientRepository.make[F](transactor)
+      clientRepo = ClientRepository.make[F]
+      patientRepo = PatientRepository.make[F]
       clientService = ClientService.make[F](clientRepo, transactor)
       patientService = PatientService.make[F](patientRepo, clientRepo, transactor)
       patientsModuleRoutes = authMiddleware(
         ClientController.routes[F](clientService) <+> PatientController.routes[F](patientService)
       )
 
-      appointmentRepo = AppointmentRepository.make[F](transactor)
+      appointmentRepo = AppointmentRepository.make[F]
       appointmentService = AppointmentService.make[F](appointmentRepo, doctorClinicRepo, patientRepo, transactor)
       appointmentsRoutes = authMiddleware(AppointmentController.routes[F](appointmentService))
 
-      templateRepo = TemplateRepository.make[F](transactor)
+      templateRepo = TemplateRepository.make[F]
       templateService = TemplateService.make[F](templateRepo, transactor)
       templatesRoutes = authMiddleware(TemplateController.routes[F](templateService))
 
-      reportRepo = ReportRepository.make[F](transactor)
-      reportImageRepo = ReportImageRepository.make[F](transactor)
+      reportRepo = ReportRepository.make[F]
+      reportImageRepo = ReportImageRepository.make[F]
       reportService = ReportService.make[F](
         reportRepo,
         reportImageRepo,
@@ -164,6 +196,8 @@ object BackendServer:
       reportsRoutes = authMiddleware(ReportController.routes[F](reportService))
 
       rateLimitState <- Resource.eval(Ref.of[F, Map[String, List[Long]]](Map.empty))
+      _ <- Async[F].background(periodicRateLimitCleanup[F](rateLimitState))
+      _ <- Async[F].background(periodicExpiredTokenCleanup[F](refreshTokenRepo, transactor))
 
       authRoutes = AuthController.routes[F](registrationService, authService)
       docsRoutes = DocsController.routes[F](config.enableDocs)

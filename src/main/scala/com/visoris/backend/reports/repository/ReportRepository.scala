@@ -20,6 +20,8 @@ trait ReportRepository[F[_]]:
 
   def findByIdAndUserId(id: Long, userId: Long): ConnectionIO[Option[Report]]
 
+  def findByIdAndUserIdForUpdate(id: Long, userId: Long): ConnectionIO[Option[Report]]
+
   def findByAppointmentIdAndUserId(appointmentId: Long, userId: Long): ConnectionIO[Option[Report]]
 
   def updateContent(id: Long, userId: Long, content: String): ConnectionIO[Option[Report]]
@@ -27,7 +29,7 @@ trait ReportRepository[F[_]]:
   def sign(id: Long, userId: Long): ConnectionIO[Option[Report]]
 
 object ReportRepository:
-  def make[F[_]](transactor: Transactor[F]): ReportRepository[F] = new ReportRepository[F]:
+  def make[F[_]]: ReportRepository[F] = new ReportRepository[F]:
 
     def insert(
       appointmentId: Long,
@@ -59,6 +61,16 @@ object ReportRepository:
         .query[Report]
         .option
 
+    def findByIdAndUserIdForUpdate(id: Long, userId: Long): ConnectionIO[Option[Report]] =
+      sql"""SELECT id, appointment_id, user_id, attendance_location_name,
+                   patient_snapshot, clinic_snapshot, content, pdf_url,
+                   signed_at, created_at, updated_at
+            FROM reports
+            WHERE id = $id AND user_id = $userId
+            FOR UPDATE"""
+        .query[Report]
+        .option
+
     def findByAppointmentIdAndUserId(appointmentId: Long, userId: Long): ConnectionIO[Option[Report]] =
       sql"""SELECT id, appointment_id, user_id, attendance_location_name,
                    patient_snapshot, clinic_snapshot, content, pdf_url,
@@ -70,8 +82,7 @@ object ReportRepository:
 
     def updateContent(id: Long, userId: Long, content: String): ConnectionIO[Option[Report]] =
       sql"""UPDATE reports
-            SET content = $content,
-                updated_at = CURRENT_TIMESTAMP
+            SET content = $content
             WHERE id = $id AND user_id = $userId AND signed_at IS NULL
             RETURNING id, appointment_id, user_id, attendance_location_name,
                       patient_snapshot, clinic_snapshot, content, pdf_url,
@@ -81,11 +92,12 @@ object ReportRepository:
 
     def sign(id: Long, userId: Long): ConnectionIO[Option[Report]] =
       sql"""UPDATE reports
-            SET signed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
+            SET signed_at = CURRENT_TIMESTAMP
             WHERE id = $id AND user_id = $userId AND signed_at IS NULL
             RETURNING id, appointment_id, user_id, attendance_location_name,
                       patient_snapshot, clinic_snapshot, content, pdf_url,
                       signed_at, created_at, updated_at"""
         .query[Report]
         .option
+
+  def make[F[_]](@scala.annotation.unused transactor: Transactor[F]): ReportRepository[F] = make[F]

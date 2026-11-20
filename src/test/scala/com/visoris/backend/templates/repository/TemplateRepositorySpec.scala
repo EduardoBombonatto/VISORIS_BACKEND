@@ -1,34 +1,18 @@
 package com.visoris.backend.templates.repository
 
-import cats.effect.{IO, Resource, Sync}
+import cats.effect.{IO, Resource}
+import com.visoris.backend.TestSupport
 import com.visoris.backend.iam.domain.User
 import com.visoris.backend.iam.repository.UserRepository
 import doobie.hikari.HikariTransactor
 import doobie.implicits.*
 import java.time.Instant
 import munit.CatsEffectSuite
-import org.flywaydb.core.Flyway
 
 class TemplateRepositorySpec extends CatsEffectSuite:
 
-  private val dbUrl  = sys.env.getOrElse("DB_URL", "jdbc:postgresql://localhost:5432/visoris_db")
-  private val dbUser = sys.env.getOrElse("DB_USER", "postgres")
-  private val dbPass = sys.env.getOrElse("DB_PASSWORD", "Visoris@123.")
-
   private val transactorResource: Resource[IO, HikariTransactor[IO]] =
-    import doobie.util.ExecutionContexts
-    for
-      ce <- ExecutionContexts.fixedThreadPool[IO](4)
-      xa <- HikariTransactor.newHikariTransactor[IO](
-        "org.postgresql.Driver", dbUrl, dbUser, dbPass, ce
-      )
-      _ <- Resource.eval(runMigrations(xa))
-    yield xa
-
-  private def runMigrations(xa: HikariTransactor[IO]): IO[Unit] =
-    xa.configure { dataSource =>
-      Sync[IO].delay { Flyway.configure().dataSource(dataSource).load().migrate(); () }
-    }
+    TestSupport.postgresTransactor(4)
 
   test("TemplateRepository insert, findAllByUserId, findByIdAndUserId, update, and delete work correctly") {
     transactorResource.use { xa =>

@@ -1,7 +1,7 @@
 package com.visoris.backend.templates.controller
 
 import cats.effect.IO
-import com.visoris.backend.iam.domain.User
+import com.visoris.backend.TestSupport
 import com.visoris.backend.templates.domain.{Template, TemplateSummary}
 import com.visoris.backend.templates.dto.*
 import com.visoris.backend.templates.service.{TemplateService, TemplatesError}
@@ -15,14 +15,7 @@ import org.http4s.implicits.*
 class TemplateControllerSpec extends CatsEffectSuite:
 
   private val now = Instant.now()
-  private val testUser = User(
-    id = 100L,
-    email = "doctor@example.com",
-    passwordHash = "hash",
-    fullName = "Dr. Silva",
-    professionalDocument = Some("CRM/SP 123456"),
-    createdAt = now
-  )
+  private val testUser = TestSupport.sampleDoctor(now)
 
   private val sampleTemplate = Template(
     id = 500L,

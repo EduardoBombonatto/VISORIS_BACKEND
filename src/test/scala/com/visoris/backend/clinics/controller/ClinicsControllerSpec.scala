@@ -2,21 +2,18 @@ package com.visoris.backend.clinics.controller
 
 import cats.effect.IO
 import cats.effect.Resource
-import cats.effect.Sync
 import cats.syntax.all.*
 import com.comcast.ip4s.*
+import com.visoris.backend.TestSupport
 import com.visoris.backend.clinics.repository.{ClinicRepository, DoctorClinicRepository}
 import com.visoris.backend.clinics.service.ClinicsService
 import com.visoris.backend.iam.controller.AuthController
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.iam.service.{AuthService, RegistrationService}
 import com.visoris.backend.shared.auth.{AuthMiddleware, TokenService}
-import doobie.hikari.HikariTransactor
-import doobie.util.ExecutionContexts
 import io.circe.Json
 import io.circe.parser.*
 import munit.CatsEffectSuite
-import org.flywaydb.core.Flyway
 import org.http4s.*
 import org.http4s.circe.*
 import org.http4s.ember.client.EmberClientBuilder
@@ -27,9 +24,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class ClinicsControllerSpec extends CatsEffectSuite:
 
-  private val dbUrl  = sys.env.getOrElse("DB_URL", "jdbc:postgresql://localhost:5432/visoris_db")
-  private val dbUser = sys.env.getOrElse("DB_USER", "postgres")
-  private val dbPass = sys.env.getOrElse("DB_PASSWORD", "Visoris@123.")
   private val jwtSecret = "test-secret-for-clinics-e2e"
 
   private given Logger[IO] = Slf4jLogger.getLogger[IO]
@@ -57,13 +51,7 @@ class ClinicsControllerSpec extends CatsEffectSuite:
 
   private def serverResource: Resource[IO, org.http4s.client.Client[IO]] =
     for
-      ce <- ExecutionContexts.fixedThreadPool[IO](4)
-      xa <- HikariTransactor.newHikariTransactor[IO](
-        "org.postgresql.Driver", dbUrl, dbUser, dbPass, ce
-      )
-      _ <- Resource.eval(xa.configure { dataSource =>
-        Sync[IO].delay { Flyway.configure().dataSource(dataSource).load().migrate(); () }
-      })
+      xa <- TestSupport.postgresTransactor(4)
       tokenService = TokenService.make(jwtSecret)
       userRepo = UserRepository.make[IO](xa)
       refreshTokenRepo = RefreshTokenRepository.make[IO](xa)

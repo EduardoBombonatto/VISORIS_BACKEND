@@ -27,7 +27,7 @@ trait TemplateRepository[F[_]]:
   def delete(id: Long, userId: Long): ConnectionIO[Int]
 
 object TemplateRepository:
-  def make[F[_]](transactor: Transactor[F]): TemplateRepository[F] = new TemplateRepository[F]:
+  def make[F[_]]: TemplateRepository[F] = new TemplateRepository[F]:
 
     def insert(
       userId: Long,
@@ -74,3 +74,5 @@ object TemplateRepository:
             WHERE id = $id AND user_id = $userId"""
         .update
         .run
+
+  def make[F[_]](@scala.annotation.unused transactor: Transactor[F]): TemplateRepository[F] = make[F]

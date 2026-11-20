@@ -20,7 +20,7 @@ trait ClinicRepository[F[_]]:
   ): ConnectionIO[Option[Clinic]]
 
 object ClinicRepository:
-  def make[F[_]](transactor: Transactor[F]): ClinicRepository[F] = new ClinicRepository[F]:
+  def make[F[_]]: ClinicRepository[F] = new ClinicRepository[F]:
 
     def findByCnpj(cnpj: String): ConnectionIO[Option[Clinic]] =
       sql"""SELECT id, name, cnpj, phone, address, created_at, updated_at
@@ -46,4 +46,6 @@ object ClinicRepository:
             RETURNING id, name, cnpj, phone, address, created_at, updated_at"""
         .query[Clinic]
         .option
+
+  def make[F[_]](@scala.annotation.unused transactor: Transactor[F]): ClinicRepository[F] = make[F]
 

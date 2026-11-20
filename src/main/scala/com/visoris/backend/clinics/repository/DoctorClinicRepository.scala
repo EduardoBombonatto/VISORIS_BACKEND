@@ -13,7 +13,7 @@ trait DoctorClinicRepository[F[_]]:
   def isLinked(userId: Long, clinicId: Long): ConnectionIO[Boolean]
 
 object DoctorClinicRepository:
-  def make[F[_]](transactor: Transactor[F]): DoctorClinicRepository[F] = new DoctorClinicRepository[F]:
+  def make[F[_]]: DoctorClinicRepository[F] = new DoctorClinicRepository[F]:
 
     def insert(userId: Long, clinicId: Long): ConnectionIO[Unit] =
       sql"""INSERT INTO doctor_clinics (user_id, clinic_id)
@@ -39,3 +39,5 @@ object DoctorClinicRepository:
             )"""
         .query[Boolean]
         .unique
+
+  def make[F[_]](@scala.annotation.unused transactor: Transactor[F]): DoctorClinicRepository[F] = make[F]

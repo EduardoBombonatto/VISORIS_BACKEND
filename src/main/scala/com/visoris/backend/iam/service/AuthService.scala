@@ -2,7 +2,7 @@ package com.visoris.backend.iam.service
 
 import cats.effect.Async
 import cats.syntax.all.*
-import com.visoris.backend.iam.domain.{RefreshToken, User}
+import com.visoris.backend.iam.domain.User
 import com.visoris.backend.iam.dto.{LoginRequest, ValidationError}
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.shared.auth.{CustomClaims, OpaqueTokenGenerator, PasswordHasher, TokenService}
@@ -21,7 +21,8 @@ final case class LoginResult(
 final case class RefreshResult(
   accessToken: String,
   expiresIn: Int,
-  newRefreshToken: String
+  newRefreshToken: String,
+  user: User
 )
 
 final case class SessionResult(
@@ -120,50 +121,63 @@ object AuthService:
           }
 
     def refresh(cookieToken: String): F[Either[RefreshError, RefreshResult]] =
-      Logger[F].info("Refresh attempt") *>
-        refreshTokenRepo.findByToken(cookieToken).transact(transactor).flatMap {
-          case None =>
-            Logger[F].info("Refresh rejected — token unknown") *>
+      for
+        _ <- Logger[F].info("Refresh attempt")
+        now <- Async[F].delay(Instant.now)
+        newRefreshToken <- OpaqueTokenGenerator.generate[F]
+        newExpires = now.plusSeconds(7L * 24 * 60 * 60)
+        outcome <- refreshAtomic(cookieToken, now, newRefreshToken, newExpires).transact(transactor)
+        result <- outcome match
+          case Left(RefreshError.Unknown) =>
+            Logger[F].info("Refresh rejected — token unknown or user missing") *>
               Async[F].pure(Left(RefreshError.Unknown))
-          case Some(rt) if rt.isRevoked =>
-            Logger[F].warn(s"Refresh rejected — token already revoked (possible theft); revoking all sessions for user=${rt.userId}") *>
-              refreshTokenRepo.revokeAllByUserId(rt.userId).transact(transactor) *>
+          case Left(RefreshError.Revoked) =>
+            Logger[F].warn("Refresh rejected — token already revoked (possible theft); all sessions revoked") *>
               Async[F].pure(Left(RefreshError.Revoked))
-          case Some(rt) if rt.expiresAt.isBefore(Instant.now) =>
+          case Left(RefreshError.Expired) =>
             Logger[F].info("Refresh rejected — token expired") *>
               Async[F].pure(Left(RefreshError.Expired))
-          case Some(rt) =>
-            rotate(rt, cookieToken)
-        }.flatTap {
-          case Left(RefreshError.Internal(msg)) =>
-            Logger[F].error(s"Refresh internal error: $msg")
-          case _ => Async[F].unit
-        }
-
-    private def rotate(rt: RefreshToken, rawToken: String): F[Either[RefreshError, RefreshResult]] =
-      userRepo.findById(rt.userId).transact(transactor).flatMap {
-        case None =>
-          Logger[F].warn(s"Refresh rejected — user not found for userId=${rt.userId}") *>
-            Async[F].pure(Left(RefreshError.Unknown))
-        case Some(user) =>
-          for
-            now <- Async[F].delay(Instant.now)
-            accessToken <- tokenService.createAccessToken[F](
-              CustomClaims(
-                userId = user.id.toString,
-                email = user.email,
-                roles = List("DOCTOR"),
-                tokenType = "ACCESS"
+          case Left(other) =>
+            Logger[F].error(s"Refresh error: $other") *>
+              Async[F].pure(Left(other))
+          case Right(user) =>
+            for
+              accessToken <- tokenService.createAccessToken[F](
+                CustomClaims(
+                  userId = user.id.toString,
+                  email = user.email,
+                  roles = List("DOCTOR"),
+                  tokenType = "ACCESS"
+                )
               )
-            )
-            newRefreshToken <- OpaqueTokenGenerator.generate[F]
-            newExpires = now.plusSeconds(7 * 24 * 60 * 60)
-            _ <- (for
-              _ <- refreshTokenRepo.revokeByToken(rawToken, "ROTATION")
-              _ <- refreshTokenRepo.create(user.id, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress)
-            yield ()).transact(transactor)
-            _ <- Logger[F].info(s"Refresh successful for user=${user.id}")
-          yield Right(RefreshResult(accessToken, 900, newRefreshToken))
+              _ <- Logger[F].info(s"Refresh successful for user=${user.id}")
+            yield Right(RefreshResult(accessToken, 900, newRefreshToken, user))
+      yield result
+
+    private def refreshAtomic(
+      cookieToken: String,
+      now: Instant,
+      newRefreshToken: String,
+      newExpires: Instant
+    ): doobie.ConnectionIO[Either[RefreshError, User]] =
+      refreshTokenRepo.findByTokenForUpdate(cookieToken).flatMap {
+        case None =>
+          (Left(RefreshError.Unknown): Either[RefreshError, User]).pure[doobie.ConnectionIO]
+        case Some(rt) if rt.isRevoked =>
+          refreshTokenRepo.revokeAllByUserId(rt.userId)
+            .as(Left(RefreshError.Revoked): Either[RefreshError, User])
+        case Some(rt) if rt.expiresAt.isBefore(now) =>
+          (Left(RefreshError.Expired): Either[RefreshError, User]).pure[doobie.ConnectionIO]
+        case Some(rt) =>
+          userRepo.findById(rt.userId).flatMap {
+            case None =>
+              (Left(RefreshError.Unknown): Either[RefreshError, User]).pure[doobie.ConnectionIO]
+            case Some(user) =>
+              for
+                _ <- refreshTokenRepo.revokeByToken(cookieToken, "ROTATION")
+                _ <- refreshTokenRepo.create(user.id, newRefreshToken, newExpires, rt.deviceInfo, rt.ipAddress)
+              yield Right(user)
+          }
       }
 
     def session(accessToken: Option[String], refreshToken: Option[String]): F[Either[SessionError, SessionResult]] =
@@ -211,13 +225,9 @@ object AuthService:
       refreshToken match
         case None => Async[F].pure(Left(SessionError.Unauthenticated))
         case Some(rt) =>
-          refresh(rt).flatMap {
-            case Left(RefreshError.Internal(msg)) => Async[F].pure(Left(SessionError.Internal(msg)))
-            case Left(_)                          => Async[F].pure(Left(SessionError.Unauthenticated))
+          refresh(rt).map {
+            case Left(RefreshError.Internal(msg)) => Left(SessionError.Internal(msg))
+            case Left(_)                          => Left(SessionError.Unauthenticated)
             case Right(result) =>
-              refreshTokenRepo.findByToken(result.newRefreshToken).transact(transactor).flatMap {
-                case None => Async[F].pure(Left(SessionError.Unauthenticated))
-                case Some(row) =>
-                  loadSession(row.userId, Some(result.accessToken), Some(result.newRefreshToken))
-              }
+              Right(SessionResult(result.user, Some(result.accessToken), Some(result.newRefreshToken)))
           }

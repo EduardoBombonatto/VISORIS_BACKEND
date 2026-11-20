@@ -155,8 +155,17 @@ object AppointmentService:
     ): F[Either[AppointmentsError, AppointmentResponse]] =
       if examStatus.isEmpty && reportStatus.isEmpty && paymentStatus.isEmpty then
         Async[F].pure(Left(AppointmentsError.Validation(List(ValidationError("status", "Pelo menos um status deve ser informado para atualização.")))))
+      else if reportStatus.contains(ReportStatus.COMPLETED) then
+        Async[F].pure(Left(AppointmentsError.Validation(List(ValidationError("report_status", "O status de laudo COMPLETED só pode ser definido pela assinatura do laudo.")))))
       else
         val program: EitherT[ConnectionIO, AppointmentsError, AppointmentResponse] = for
+          currentOpt <- EitherT.right[AppointmentsError](appointmentRepo.findById(id, userId))
+          current    <- EitherT.fromOption[ConnectionIO](currentOpt, AppointmentsError.NotFound)
+          _ <- EitherT.cond[ConnectionIO](
+            !(current.examStatus == ExamStatus.CANCELLED && examStatus.exists(_ != ExamStatus.CANCELLED)),
+            (),
+            AppointmentsError.Validation(List(ValidationError("exam_status", "Não é permitido alterar o status de um agendamento cancelado.")))
+          )
           updatedOpt <- EitherT.right[AppointmentsError](
             appointmentRepo.updateStatus(id, userId, examStatus, reportStatus, paymentStatus)
           )

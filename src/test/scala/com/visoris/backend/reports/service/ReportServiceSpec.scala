@@ -41,3 +41,20 @@ class ReportServiceSpec extends FunSuite:
     val longCaption = ReportImageRequest("https://storage.visoris.com/img.jpg", Some("a" * 501), 0)
     assert(ReportService.validateImageRequest(longCaption).isLeft)
   }
+
+  test("validateImageRequest rejects unsafe schemes and loopback/private/metadata hosts") {
+    val unsafeUrls = List(
+      "javascript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "file:///etc/passwd",
+      "http://localhost/img.png",
+      "http://127.0.0.1/img.png",
+      "http://[::1]/img.png",
+      "http://10.0.0.1/img.png",
+      "http://192.168.1.1/img.png",
+      "http://metadata.google.internal/computeMetadata/v1/"
+    )
+    unsafeUrls.foreach { url =>
+      assert(ReportService.validateImageRequest(ReportImageRequest(url, None, 0)).isLeft, s"Expected $url to be rejected")
+    }
+  }

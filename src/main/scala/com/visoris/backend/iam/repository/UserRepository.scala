@@ -14,7 +14,7 @@ trait UserRepository[F[_]]:
   def findByProfessionalDocument(doc: String): ConnectionIO[Option[User]]
 
 object UserRepository:
-  def make[F[_]](transactor: Transactor[F]): UserRepository[F] = new UserRepository[F]:
+  def make[F[_]]: UserRepository[F] = new UserRepository[F]:
     def create(user: User): ConnectionIO[Unit] =
       sql"""
         INSERT INTO users (id, email, password_hash, full_name, professional_document, created_at)
@@ -38,3 +38,5 @@ object UserRepository:
         SELECT id, email, password_hash, full_name, professional_document, created_at
         FROM users WHERE professional_document = ${doc}
       """.query[User].option
+
+  def make[F[_]](@scala.annotation.unused transactor: Transactor[F]): UserRepository[F] = make[F]

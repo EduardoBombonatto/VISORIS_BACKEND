@@ -40,7 +40,7 @@ trait AppointmentRepository[F[_]]:
   ): ConnectionIO[Option[Appointment]]
 
 object AppointmentRepository:
-  def make[F[_]](transactor: Transactor[F]): AppointmentRepository[F] = new AppointmentRepository[F]:
+  def make[F[_]]: AppointmentRepository[F] = new AppointmentRepository[F]:
 
     def insert(
       userId: Long,
@@ -118,8 +118,7 @@ object AppointmentRepository:
       val setFragments = List(
         examStatus.map(s => fr"exam_status = $s"),
         reportStatus.map(s => fr"report_status = $s"),
-        paymentStatus.map(s => fr"payment_status = $s"),
-        Some(fr"updated_at = CURRENT_TIMESTAMP")
+        paymentStatus.map(s => fr"payment_status = $s")
       ).flatten
 
       cats.data.NonEmptyList.fromList(setFragments) match
@@ -135,3 +134,5 @@ object AppointmentRepository:
           query.query[Appointment].option
         case None =>
           findById(id, userId)
+
+  def make[F[_]](@scala.annotation.unused transactor: Transactor[F]): AppointmentRepository[F] = make[F]

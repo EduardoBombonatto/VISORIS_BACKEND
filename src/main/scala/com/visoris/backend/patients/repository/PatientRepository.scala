@@ -37,7 +37,7 @@ trait PatientRepository[F[_]]:
   def findOwnerUserId(patientId: Long): ConnectionIO[Option[Long]]
 
 object PatientRepository:
-  def make[F[_]](transactor: Transactor[F]): PatientRepository[F] = new PatientRepository[F]:
+  def make[F[_]]: PatientRepository[F] = new PatientRepository[F]:
 
     def insert(
       clientId: Long,
@@ -99,3 +99,5 @@ object PatientRepository:
             WHERE p.id = $patientId"""
         .query[Long]
         .option
+
+  def make[F[_]](@scala.annotation.unused transactor: Transactor[F]): PatientRepository[F] = make[F]

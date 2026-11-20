@@ -1,5 +1,6 @@
 package com.visoris.backend.iam.domain
 
+import com.visoris.backend.TestSupport
 import munit.CatsEffectSuite
 import java.time.Instant
 
@@ -9,7 +10,7 @@ class UserSpec extends CatsEffectSuite:
     val user = User(
       id = 1L,
       email = "doctor@visoris.com",
-      passwordHash = "$2a$12$hashedvalue1234567890abcdef",
+      passwordHash = TestSupport.dynamicHash(),
       fullName = "Dra. Ana Silva",
       professionalDocument = Some("CRMV-PR 98765"),
       createdAt = Instant.now
@@ -25,7 +26,7 @@ class UserSpec extends CatsEffectSuite:
     val user = User(
       id = 2L,
       email = "doctor2@visoris.com",
-      passwordHash = "$2a$12$hashedvalue",
+      passwordHash = TestSupport.dynamicHash(),
       fullName = "Dr. João Silva",
       professionalDocument = None,
       createdAt = Instant.now
@@ -38,7 +39,7 @@ class UserSpec extends CatsEffectSuite:
     val user = User(
       id = 3L,
       email = "doctor3@visoris.com",
-      passwordHash = "$2a$12$somehash",
+      passwordHash = TestSupport.dynamicHash(),
       fullName = "Dr. Test",
       professionalDocument = None,
       createdAt = Instant.now

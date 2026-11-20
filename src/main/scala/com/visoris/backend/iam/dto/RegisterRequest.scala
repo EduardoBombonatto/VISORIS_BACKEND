@@ -10,17 +10,6 @@ final case class RegisterRequest(
   password: String,
   professionalDocument: Option[String]
 ):
-  private val emailRegex = """^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$""".r
-  private val asciiPattern = """^[\x20-\x7E]+$""".r
-
-  private val disposableDomains = Set(
-    "mailinator.com", "guerrillamail.com", "10minutemail.com", "tempmail.com",
-    "throwaway.email", "yopmail.com", "sharklasers.com", "trashmail.com",
-    "temp-mail.org", "fakeinbox.com", "guerrillamail.info", "guerrillamail.biz",
-    "maildrop.cc", "getairmail.com", "mailnesia.com", "spamgourmet.com",
-    "spambox.us", "dispostable.com", "mailcatch.com", "tempinbox.com"
-  )
-
   def validate: List[ValidationError] =
     validateRequiredFields ++
       validateEmailFormat.toList ++
@@ -38,7 +27,7 @@ final case class RegisterRequest(
     ).flatten
 
   private def validateEmailFormat: Option[ValidationError] =
-    if emailRegex.matches(email.trim) then None
+    if RegisterRequest.emailRegex.matches(email.trim) then None
     else Some(ValidationError("email", "Formato de e-mail inválido."))
 
   private def validatePassword: List[ValidationError] =
@@ -50,7 +39,7 @@ final case class RegisterRequest(
       Option.when(!password.exists(_.isLower))(ValidationError("password", "A senha deve conter pelo menos uma letra minúscula.")),
       Option.when(!password.exists(_.isDigit))(ValidationError("password", "A senha deve conter pelo menos um número.")),
       Option.when(password.forall(ch => ch.isLetterOrDigit))(ValidationError("password", "A senha deve conter pelo menos um caractere especial.")),
-      Option.when(!asciiPattern.matches(password))(ValidationError("password", "A senha contém caracteres não permitidos. Use apenas letras, números e símbolos padrão."))
+      Option.when(!RegisterRequest.asciiPattern.matches(password))(ValidationError("password", "A senha contém caracteres não permitidos. Use apenas letras, números e símbolos padrão."))
     ).flatten
 
   private def validateFieldLengths: List[ValidationError] =
@@ -69,9 +58,20 @@ final case class RegisterRequest(
 
   private def validateDisposableEmail: Option[ValidationError] =
     val domain = email.trim.split("@").lastOption.getOrElse("").toLowerCase
-    if disposableDomains.contains(domain) then
+    if RegisterRequest.disposableDomains.contains(domain) then
       Some(ValidationError("email", "Por favor, use um e-mail profissional ou pessoal válido."))
     else None
 
 object RegisterRequest:
+  private val emailRegex = """^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$""".r
+  private val asciiPattern = """^[\x20-\x7E]+$""".r
+
+  private val disposableDomains: Set[String] = Set(
+    "mailinator.com", "guerrillamail.com", "10minutemail.com", "tempmail.com",
+    "throwaway.email", "yopmail.com", "sharklasers.com", "trashmail.com",
+    "temp-mail.org", "fakeinbox.com", "guerrillamail.info", "guerrillamail.biz",
+    "maildrop.cc", "getairmail.com", "mailnesia.com", "spamgourmet.com",
+    "spambox.us", "dispostable.com", "mailcatch.com", "tempinbox.com"
+  )
+
   given Decoder[RegisterRequest] = deriveDecoder

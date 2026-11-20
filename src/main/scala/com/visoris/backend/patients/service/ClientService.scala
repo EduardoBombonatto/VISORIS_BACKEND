@@ -62,8 +62,11 @@ object ClientService:
         List(ValidationError("full_name", s"Nome deve ter entre $MinNameLength e $MaxNameLength caracteres."))
       else Nil
 
+    val cpfFormatValid = request.documentCpf.forall(c => (c >= '0' && c <= '9') || c == '.' || c == '-' || c.isWhitespace)
     val cpfErrors =
       if sanitized.documentCpf.isEmpty then List(ValidationError("document_cpf", "CPF é obrigatório."))
+      else if !cpfFormatValid then
+        List(ValidationError("document_cpf", "CPF contém caracteres inválidos."))
       else if sanitized.documentCpf.length != 11 then
         List(ValidationError("document_cpf", "CPF deve conter exatamente 11 dígitos."))
       else if !isValidCpf(sanitized.documentCpf) then
@@ -95,16 +98,20 @@ object ClientService:
     transactor: Transactor[F]
   ): ClientService[F] = new ClientService[F]:
 
-    private def mapUniqueViolation(err: Throwable): Either[ClientsError, Nothing] =
-      err match
-        case e: SQLException if e.getSQLState == "23505" =>
+    private def handleDbError[A](op: String, userId: Long)(res: Either[Throwable, Either[ClientsError, A]]): F[Either[ClientsError, A]] =
+      res match
+        case Right(value) => Async[F].pure(value)
+        case Left(e: SQLException) if e.getSQLState == "23505" =>
           val msg = Option(e.getMessage).getOrElse("").toLowerCase
-          if msg.contains("cpf") then Left(ClientsError.ConflictCpf)
-          else if msg.contains("email") then Left(ClientsError.ConflictEmail)
-          else if msg.contains("phone") then Left(ClientsError.ConflictPhone)
-          else Left(ClientsError.ConflictCpf)
-        case _ =>
-          Left(ClientsError.Internal("Erro interno ao processar cliente."))
+          val conflict =
+            if msg.contains("cpf") then ClientsError.ConflictCpf
+            else if msg.contains("email") then ClientsError.ConflictEmail
+            else if msg.contains("phone") then ClientsError.ConflictPhone
+            else ClientsError.ConflictCpf
+          Async[F].pure(Left(conflict))
+        case Left(err) =>
+          Logger[F].error(err)(s"Client $op unexpected DB error for userId=$userId") *>
+            Async[F].pure(Left(ClientsError.Internal("Erro interno ao processar cliente.")))
 
     def create(request: ClientRequest, userId: Long): F[Either[ClientsError, Client]] =
       validateRequest(request) match
@@ -116,7 +123,7 @@ object ClientService:
             createProgram(valid, userId)
               .transact(transactor)
               .attempt
-              .map(_.fold(mapUniqueViolation, identity))
+              .flatMap(handleDbError("create", userId))
               .flatTap {
                 case Right(client) =>
                   Logger[F].info(s"Client created id=${client.id} for userId=${client.userId}")
@@ -146,7 +153,7 @@ object ClientService:
             updateProgram(clientId, valid, userId)
               .transact(transactor)
               .attempt
-              .map(_.fold(mapUniqueViolation, identity))
+              .flatMap(handleDbError("update", userId))
               .flatTap {
                 case Right(client) =>
                   Logger[F].info(s"Client updated id=${client.id} for userId=${client.userId}")

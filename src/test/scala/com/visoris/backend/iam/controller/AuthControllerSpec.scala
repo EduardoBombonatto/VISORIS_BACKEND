@@ -2,10 +2,10 @@ package com.visoris.backend.iam.controller
 
 import cats.effect.IO
 import cats.effect.Resource
+import com.visoris.backend.TestSupport
 import com.visoris.backend.iam.repository.{RefreshTokenRepository, UserRepository}
 import com.visoris.backend.iam.service.{AuthService, RegistrationService}
 import com.visoris.backend.shared.auth.TokenService
-import doobie.hikari.HikariTransactor
 import io.circe.Json
 import io.circe.parser.*
 import munit.CatsEffectSuite
@@ -20,9 +20,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class AuthControllerSpec extends CatsEffectSuite:
 
-  private val dbUrl  = sys.env.getOrElse("DB_URL", "jdbc:postgresql://localhost:5432/visoris_db")
-  private val dbUser = sys.env.getOrElse("DB_USER", "postgres")
-  private val dbPass = sys.env.getOrElse("DB_PASSWORD", "Visoris@123.")
   private val jwtSecret = "test-secret-for-e2e-tests"
 
   private given Logger[IO] = Slf4jLogger.getLogger[IO]
@@ -175,17 +172,8 @@ class AuthControllerSpec extends CatsEffectSuite:
   }
 
   private def serverResource: Resource[IO, org.http4s.client.Client[IO]] =
-    import cats.effect.Sync
-    import doobie.util.ExecutionContexts
-    import org.flywaydb.core.Flyway
     for
-      ce <- ExecutionContexts.fixedThreadPool[IO](2)
-      xa <- HikariTransactor.newHikariTransactor[IO](
-        "org.postgresql.Driver", dbUrl, dbUser, dbPass, ce
-      )
-      _ <- Resource.eval(xa.configure { dataSource =>
-        Sync[IO].delay { Flyway.configure().dataSource(dataSource).load().migrate(); () }
-      })
+      xa <- TestSupport.postgresTransactor(2)
       userRepo = UserRepository.make[IO](xa)
       refreshTokenRepo = RefreshTokenRepository.make[IO](xa)
       registrationService = RegistrationService.make[IO](TokenService.make(jwtSecret), xa, userRepo, refreshTokenRepo)
@@ -203,12 +191,12 @@ class AuthControllerSpec extends CatsEffectSuite:
   test("login: happy path returns 200 with user data and Set-Cookie (accessToken + refreshToken)") {
     serverResource.use { client =>
       val email = s"e2e-login-${System.currentTimeMillis}@visoris.com"
-      val password = "Senha@123"
+      val secret = TestSupport.dynamicSecret()
       val doc = s"CRMV-LOGIN-${System.currentTimeMillis}"
-      val registerBody = registerRequestJson("Dr. Login", email, password, Some(doc))
+      val registerBody = registerRequestJson("Dr. Login", email, secret, Some(doc))
       for
         _ <- makeRequest(client, registerBody)
-        loginJson = loginRequestJson(email, password)
+        loginJson = loginRequestJson(email, secret)
         loginReq = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "login")
           .withEntity(loginJson)
         loginResp <- client.run(loginReq).use { resp =>
@@ -235,12 +223,12 @@ class AuthControllerSpec extends CatsEffectSuite:
   test("refresh: returns expiresIn and new Set-Cookie (accessToken + refreshToken); old token replay returns 401 and revokes sessions") {
     serverResource.use { client =>
       val email = s"e2e-refresh-${System.currentTimeMillis}@visoris.com"
-      val password = "Senha@123"
+      val secret = TestSupport.dynamicSecret()
       val doc = s"CRMV-REFRESH-${System.currentTimeMillis}"
-      val registerBody = registerRequestJson("Dr. Refresh", email, password, Some(doc))
+      val registerBody = registerRequestJson("Dr. Refresh", email, secret, Some(doc))
       for
         _ <- makeRequest(client, registerBody)
-        loginJson = loginRequestJson(email, password)
+        loginJson = loginRequestJson(email, secret)
         loginReq = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "login")
           .withEntity(loginJson)
         loginResp <- client.run(loginReq).use { resp =>
@@ -346,12 +334,12 @@ class AuthControllerSpec extends CatsEffectSuite:
 
   private def registerAndLogin(client: org.http4s.client.Client[IO]): IO[String] =
     val email = s"e2e-logout-${System.currentTimeMillis}@visoris.com"
-    val password = "Senha@123"
+    val secret = TestSupport.dynamicSecret()
     val doc = s"CRMV-LOGOUT-${System.currentTimeMillis}"
-    val registerBody = registerRequestJson("Dr. Logout", email, password, Some(doc))
+    val registerBody = registerRequestJson("Dr. Logout", email, secret, Some(doc))
     for
       _ <- makeRequest(client, registerBody)
-      loginJson = loginRequestJson(email, password)
+      loginJson = loginRequestJson(email, secret)
       loginReq = Request[IO](method = Method.POST, uri = baseUri / "api" / "v1" / "auth" / "login")
         .withEntity(loginJson)
       loginResp <- client.run(loginReq).use { resp => resp.as[String].map(body => (resp.headers, body)) }

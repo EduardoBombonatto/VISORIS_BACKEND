@@ -17,8 +17,9 @@ import doobie.ConnectionIO
 import doobie.implicits.*
 import doobie.util.transactor.Transactor
 import io.circe.Json
-import java.net.URI
+import java.net.{InetAddress, URI}
 import java.sql.SQLException
+import org.typelevel.log4cats.Logger
 import scala.util.Try
 
 trait ReportService[F[_]]:
@@ -34,20 +35,34 @@ object ReportService:
   val MaxCaptionLength  = 500
   val MaxContentLength  = 500000
 
-  private val BlockedImageHosts: Set[String] = Set(
-    "169.254.169.254",
+  private val BlockedHostnames: Set[String] = Set(
+    "localhost",
     "metadata.google.internal",
     "metadata.goog"
   )
+
+  private val IpLiteralPattern = """^(\[.*\]|[0-9.]+|[0-9a-fA-F:]+|0x[0-9a-fA-F]+)$""".r
+
+  private def isDisallowedHost(host: String): Boolean =
+    val normalized = host.stripPrefix("[").stripSuffix("]").toLowerCase
+    if normalized.isEmpty || BlockedHostnames.contains(normalized) ||
+      normalized.endsWith(".localhost") || normalized.endsWith(".local") || normalized.endsWith(".internal")
+    then true
+    else if IpLiteralPattern.matches(host) then
+      Try(InetAddress.getByName(normalized)).toOption.forall { addr =>
+        addr.isAnyLocalAddress || addr.isLoopbackAddress || addr.isLinkLocalAddress ||
+        addr.isSiteLocalAddress || addr.isMulticastAddress
+      }
+    else false
 
   private def isSafeImageUrl(raw: String): Boolean =
     if SecurityUtils.containsNullByte(raw) then false
     else
       Try(new URI(raw)).toOption.exists { uri =>
         val scheme = Option(uri.getScheme).map(_.toLowerCase)
-        val host = Option(uri.getHost).map(_.toLowerCase)
+        val host = Option(uri.getHost)
         scheme.exists(s => s == "https" || s == "http") &&
-        host.exists(h => h.nonEmpty && !BlockedImageHosts.contains(h) && !h.startsWith("169.254."))
+        host.exists(h => !isDisallowedHost(h))
       }
 
   final case class ValidCreateReport(appointmentId: Long, content: String)
@@ -123,7 +138,7 @@ object ReportService:
       "biologicalDetails" -> p.biologicalDetails
     )
 
-  def make[F[_]: Async](
+  def make[F[_]: Async: Logger](
     reportRepo: ReportRepository[F],
     reportImageRepo: ReportImageRepository[F],
     appointmentRepo: AppointmentRepository[F],
@@ -173,12 +188,13 @@ object ReportService:
             )
           yield ReportWithImages(created, Nil)
 
-          program.value.transact(transactor).attempt.map {
-            case Right(res) => res
+          program.value.transact(transactor).attempt.flatMap {
+            case Right(res) => Async[F].pure(res)
             case Left(e: SQLException) if e.getSQLState == "23505" =>
-              Left(ReportsError.Conflict("Já existe um laudo associado a este agendamento."))
-            case Left(_) =>
-              Left(ReportsError.Internal("Erro interno ao criar rascunho de laudo."))
+              Async[F].pure(Left(ReportsError.Conflict("Já existe um laudo associado a este agendamento.")))
+            case Left(err) =>
+              Logger[F].error(err)(s"Failed to create report draft for appointmentId=${valid.appointmentId} userId=$userId") *>
+                Async[F].pure(Left(ReportsError.Internal("Erro interno ao criar rascunho de laudo.")))
           }
 
     def updateContent(id: Long, request: UpdateReportRequest, userId: Long): F[Either[ReportsError, ReportWithImages]] =
@@ -186,7 +202,7 @@ object ReportService:
         case Left(errors) => Async[F].pure(Left(ReportsError.Validation(errors)))
         case Right(newContent) =>
           val program: EitherT[ConnectionIO, ReportsError, ReportWithImages] = for
-            existingOpt <- EitherT.right[ReportsError](reportRepo.findByIdAndUserId(id, userId))
+            existingOpt <- EitherT.right[ReportsError](reportRepo.findByIdAndUserIdForUpdate(id, userId))
             existing    <- EitherT.fromOption[ConnectionIO](existingOpt, ReportsError.NotFound)
             _ <- EitherT.cond[ConnectionIO](
               existing.signedAt.isEmpty,
@@ -205,7 +221,7 @@ object ReportService:
         case Left(errors) => Async[F].pure(Left(ReportsError.Validation(errors)))
         case Right(valid) =>
           val program: EitherT[ConnectionIO, ReportsError, ReportImage] = for
-            existingOpt <- EitherT.right[ReportsError](reportRepo.findByIdAndUserId(reportId, userId))
+            existingOpt <- EitherT.right[ReportsError](reportRepo.findByIdAndUserIdForUpdate(reportId, userId))
             existing    <- EitherT.fromOption[ConnectionIO](existingOpt, ReportsError.NotFound)
             _ <- EitherT.cond[ConnectionIO](
               existing.signedAt.isEmpty,
@@ -221,7 +237,7 @@ object ReportService:
 
     def signReport(id: Long, userId: Long): F[Either[ReportsError, ReportWithImages]] =
       val program: EitherT[ConnectionIO, ReportsError, ReportWithImages] = for
-        existingOpt <- EitherT.right[ReportsError](reportRepo.findByIdAndUserId(id, userId))
+        existingOpt <- EitherT.right[ReportsError](reportRepo.findByIdAndUserIdForUpdate(id, userId))
         existing    <- EitherT.fromOption[ConnectionIO](existingOpt, ReportsError.NotFound)
         _ <- EitherT.cond[ConnectionIO](
           existing.signedAt.isEmpty,

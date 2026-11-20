@@ -1,7 +1,7 @@
 package com.visoris.backend.reports.controller
 
 import cats.effect.IO
-import com.visoris.backend.iam.domain.User
+import com.visoris.backend.TestSupport
 import com.visoris.backend.reports.domain.{Report, ReportImage, ReportWithImages}
 import com.visoris.backend.reports.dto.*
 import com.visoris.backend.reports.service.{ReportService, ReportsError}
@@ -15,14 +15,7 @@ import org.http4s.implicits.*
 class ReportControllerSpec extends CatsEffectSuite:
 
   private val now = Instant.parse("2026-10-21T12:00:00Z")
-  private val testUser = User(
-    id = 100L,
-    email = "doctor@example.com",
-    passwordHash = "hash",
-    fullName = "Dr. Silva",
-    professionalDocument = Some("CRM/SP 123456"),
-    createdAt = now
-  )
+  private val testUser = TestSupport.sampleDoctor(now)
 
   private val samplePatientSnap = Json.obj("id" -> Json.fromString("300"), "name" -> Json.fromString("Rex"))
   private val sampleClinicSnap  = Json.obj("id" -> Json.fromString("200"), "name" -> Json.fromString("Clínica Vida"))

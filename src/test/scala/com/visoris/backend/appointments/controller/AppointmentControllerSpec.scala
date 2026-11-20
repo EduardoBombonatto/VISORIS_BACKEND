@@ -1,10 +1,10 @@
 package com.visoris.backend.appointments.controller
 
 import cats.effect.IO
+import com.visoris.backend.TestSupport
 import com.visoris.backend.appointments.domain.{ExamStatus, PaymentStatus, ReportStatus}
 import com.visoris.backend.appointments.dto.{AppointmentResponse, CreateAppointmentRequest, ValidationError}
 import com.visoris.backend.appointments.service.{AppointmentService, AppointmentsError}
-import com.visoris.backend.iam.domain.User
 import io.circe.Json
 import java.time.Instant
 import munit.CatsEffectSuite
@@ -15,14 +15,7 @@ import org.http4s.implicits.*
 class AppointmentControllerSpec extends CatsEffectSuite:
 
   private val now = Instant.parse("2026-10-15T14:30:00Z")
-  private val testUser = User(
-    id = 100L,
-    email = "doctor@example.com",
-    passwordHash = "hash",
-    fullName = "Dr. Silva",
-    professionalDocument = Some("CRM/SP 123456"),
-    createdAt = now
-  )
+  private val testUser = TestSupport.sampleDoctor(now)
 
   private val sampleResponse = AppointmentResponse(
     id = "500",

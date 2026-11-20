@@ -39,7 +39,7 @@ trait ClientRepository[F[_]]:
   def hasPatients(clientId: Long): ConnectionIO[Boolean]
 
 object ClientRepository:
-  def make[F[_]](transactor: Transactor[F]): ClientRepository[F] = new ClientRepository[F]:
+  def make[F[_]]: ClientRepository[F] = new ClientRepository[F]:
 
     def insert(
       userId: Long,
@@ -102,8 +102,7 @@ object ClientRepository:
             SET full_name = $fullName,
                 document_cpf = $documentCpf,
                 email = $email,
-                phone = $phone,
-                updated_at = CURRENT_TIMESTAMP
+                phone = $phone
             WHERE id = $id AND user_id = $userId
             RETURNING id, user_id, full_name, document_cpf, email, phone, created_at, updated_at"""
         .query[Client]
@@ -116,3 +115,5 @@ object ClientRepository:
       sql"""SELECT EXISTS (SELECT 1 FROM patients WHERE client_id = $clientId)"""
         .query[Boolean]
         .unique
+
+  def make[F[_]](@scala.annotation.unused transactor: Transactor[F]): ClientRepository[F] = make[F]

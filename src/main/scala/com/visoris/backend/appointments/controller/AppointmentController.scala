@@ -5,28 +5,35 @@ import cats.syntax.all.*
 import com.visoris.backend.appointments.dto.*
 import com.visoris.backend.appointments.service.{AppointmentService, AppointmentsError}
 import com.visoris.backend.iam.domain.User
-import com.visoris.backend.shared.dto.ApiResponse
-import io.circe.syntax.*
+import com.visoris.backend.shared.http.HttpResponses
 import java.time.Instant
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.Http4sDsl
-import org.http4s.headers.`Content-Type`
 import scala.util.Try
 
 object AppointmentController:
 
-  private def errorResponse(errors: List[ValidationError]): ApiResponse[Map[String, List[Map[String, String]]]] =
-    val data = Map("errors" -> errors.map(e => Map("field" -> e.field, "message" -> e.message)))
-    ApiResponse(
-      erro = true,
-      message = "Dados inválidos.",
-      data = Some(data),
-      httpcode = 400,
-      timestamp = Instant.now
-    )
+  private def mapError[F[_]: Async](err: AppointmentsError, notFoundMsg: String): F[Response[F]] =
+    err match
+      case AppointmentsError.Validation(errors) =>
+        HttpResponses.validationError(errors.map(e => (e.field, e.message)))
+      case AppointmentsError.NotFound =>
+        HttpResponses.notFound(notFoundMsg)
+      case AppointmentsError.Internal(msg) =>
+        HttpResponses.internalError(msg)
 
-  private def jsonContent: `Content-Type` = `Content-Type`(MediaType.application.json)
+  private def parseOptionalInstant(field: String, raw: Option[String]): Either[(String, String), Option[Instant]] =
+    raw match
+      case None => Right(None)
+      case Some(v) =>
+        Try(Instant.parse(v.trim)).toEither
+          .left.map(_ => (field, s"Formato de data inválido para '$field'. Formato esperado: ISO 8601."))
+          .flatMap { ts =>
+            if ts.isBefore(AppointmentService.MinScheduledAt) || ts.isAfter(AppointmentService.MaxScheduledAt) then
+              Left((field, s"Data fora do intervalo permitido para '$field' (1900 a 2100)."))
+            else Right(Some(ts))
+          }
 
   def routes[F[_]: Async](service: AppointmentService[F]): AuthedRoutes[User, F] =
     val dsl = new Http4sDsl[F] {}
@@ -36,36 +43,14 @@ object AppointmentController:
     object OptionalEndDateQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("endDate")
     object OptionalClinicIdQueryParamMatcher extends OptionalQueryParamDecoderMatcher[String]("clinicId")
 
-    def parseOptionalInstant(field: String, raw: Option[String]): Either[ValidationError, Option[Instant]] =
-      raw match
-        case None => Right(None)
-        case Some(v) =>
-          Try(Instant.parse(v.trim)).toEither
-            .left.map(_ => ValidationError(field, s"Formato de data inválido para '$field'. Formato esperado: ISO 8601."))
-            .flatMap { ts =>
-              if ts.isBefore(AppointmentService.MinScheduledAt) || ts.isAfter(AppointmentService.MaxScheduledAt) then
-                Left(ValidationError(field, s"Data fora do intervalo permitido para '$field' (1900 a 2100)."))
-              else Right(Some(ts))
-            }
-
     AuthedRoutes.of[User, F] {
       case req @ POST -> Root / "api" / "v1" / "appointments" as user =>
         req.req.as[CreateAppointmentRequest].attempt.flatMap {
-          case Left(_) =>
-            BadRequest(ApiResponse.error("Requisição inválida. Verifique o formato dos dados.", 400).asJson)
-              .map(_.withContentType(jsonContent))
+          case Left(_) => HttpResponses.badRequest("Requisição inválida. Verifique o formato dos dados.")
           case Right(createReq) =>
             service.create(createReq, user.id).flatMap {
-              case Left(AppointmentsError.Validation(errors)) =>
-                BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
-              case Left(AppointmentsError.NotFound) =>
-                NotFound(ApiResponse.error("Clínica ou paciente não encontrados.", 404).asJson)
-                  .map(_.withContentType(jsonContent))
-              case Left(AppointmentsError.Internal(msg)) =>
-                InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
-              case Right(resp) =>
-                Created(ApiResponse.success("Agendamento criado com sucesso.", CreateAppointmentResponse(resp), 201).asJson)
-                  .map(_.withContentType(jsonContent))
+              case Left(err)   => mapError(err, "Clínica ou paciente não encontrados.")
+              case Right(resp) => HttpResponses.created("Agendamento criado com sucesso.", CreateAppointmentResponse(resp))
             }
         }
 
@@ -73,46 +58,24 @@ object AppointmentController:
           OptionalStartDateQueryParamMatcher(rawStartDate) +&
           OptionalEndDateQueryParamMatcher(rawEndDate) +&
           OptionalClinicIdQueryParamMatcher(rawClinicId) as user =>
-        val startInstantEither = parseOptionalInstant("startDate", rawStartDate)
-        val endInstantEither = parseOptionalInstant("endDate", rawEndDate)
-        val clinicIdEither = rawClinicId match
-          case None => Right(None)
-          case Some(v) =>
-            v.trim.toLongOption
-              .toRight(ValidationError("clinicId", "Parâmetro 'clinicId' deve ser um número inteiro válido."))
-              .map(Some(_))
-
-        val errors = List(startInstantEither.left.toOption, endInstantEither.left.toOption, clinicIdEither.left.toOption).flatten
-        if errors.nonEmpty then
-          BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
+        val startEither = parseOptionalInstant("startDate", rawStartDate)
+        val endEither = parseOptionalInstant("endDate", rawEndDate)
+        val clinicEither = HttpResponses.parseOptionalLong("clinicId", rawClinicId)
+        val errors = List(startEither.left.toOption, endEither.left.toOption, clinicEither.left.toOption).flatten
+        if errors.nonEmpty then HttpResponses.validationError(errors)
         else
-          service.listFiltered(user.id, startInstantEither.toOption.flatten, endInstantEither.toOption.flatten, clinicIdEither.toOption.flatten).flatMap {
-            case Left(AppointmentsError.Validation(validationErrors)) =>
-              BadRequest(errorResponse(validationErrors).asJson).map(_.withContentType(jsonContent))
-            case Left(AppointmentsError.NotFound) =>
-              NotFound(ApiResponse.error("Clínica não encontrada.", 404).asJson).map(_.withContentType(jsonContent))
-            case Left(AppointmentsError.Internal(msg)) =>
-              InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
-            case Right(list) =>
-              Ok(ApiResponse.success("Agendamentos listados com sucesso.", AppointmentListResponse(list), 200).asJson)
-                .map(_.withContentType(jsonContent))
+          service.listFiltered(user.id, startEither.toOption.flatten, endEither.toOption.flatten, clinicEither.toOption.flatten).flatMap {
+            case Left(err)   => mapError(err, "Clínica não encontrada.")
+            case Right(list) => HttpResponses.ok("Agendamentos listados com sucesso.", AppointmentListResponse(list))
           }
 
       case req @ PATCH -> Root / "api" / "v1" / "appointments" / LongVar(id) / "status" as user =>
         req.req.as[UpdateAppointmentStatusRequest].attempt.flatMap {
-          case Left(_) =>
-            BadRequest(ApiResponse.error("Requisição inválida. Verifique os status fornecidos.", 400).asJson)
-              .map(_.withContentType(jsonContent))
+          case Left(_) => HttpResponses.badRequest("Requisição inválida. Verifique os status fornecidos.")
           case Right(updateReq) =>
             service.updateStatus(id, user.id, updateReq.examStatus, updateReq.reportStatus, updateReq.paymentStatus).flatMap {
-              case Left(AppointmentsError.Validation(errors)) =>
-                BadRequest(errorResponse(errors).asJson).map(_.withContentType(jsonContent))
-              case Left(AppointmentsError.NotFound) =>
-                NotFound(ApiResponse.error("Agendamento não encontrado.", 404).asJson).map(_.withContentType(jsonContent))
-              case Left(AppointmentsError.Internal(msg)) =>
-                InternalServerError(ApiResponse.error(msg, 500).asJson).map(_.withContentType(jsonContent))
-              case Right(resp) =>
-                Ok(ApiResponse.success("Status atualizado com sucesso.", resp, 200).asJson).map(_.withContentType(jsonContent))
+              case Left(err)   => mapError(err, "Agendamento não encontrado.")
+              case Right(resp) => HttpResponses.ok("Status atualizado com sucesso.", resp)
             }
         }
     }

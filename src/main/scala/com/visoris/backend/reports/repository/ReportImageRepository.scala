@@ -23,7 +23,7 @@ trait ReportImageRepository[F[_]]:
   def findByReportId(reportId: Long): ConnectionIO[List[ReportImage]]
 
 object ReportImageRepository:
-  def make[F[_]](transactor: Transactor[F]): ReportImageRepository[F] = new ReportImageRepository[F]:
+  def make[F[_]]: ReportImageRepository[F] = new ReportImageRepository[F]:
 
     def insert(
       reportId: Long,
@@ -52,3 +52,5 @@ object ReportImageRepository:
             ORDER BY display_order ASC, id ASC"""
         .query[ReportImage]
         .to[List]
+
+  def make[F[_]](@scala.annotation.unused transactor: Transactor[F]): ReportImageRepository[F] = make[F]

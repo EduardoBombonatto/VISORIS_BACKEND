@@ -1,7 +1,7 @@
 package com.visoris.backend.patients.controller
 
 import cats.effect.IO
-import com.visoris.backend.iam.domain.User
+import com.visoris.backend.TestSupport
 import com.visoris.backend.patients.domain.Client
 import com.visoris.backend.patients.dto.{ClientRequest, ValidationError}
 import com.visoris.backend.patients.service.{ClientService, ClientsError}
@@ -15,14 +15,7 @@ import org.http4s.implicits.*
 class ClientControllerSpec extends CatsEffectSuite:
 
   private val now = Instant.now()
-  private val testUser = User(
-    id = 100L,
-    email = "doctor@example.com",
-    passwordHash = "hash",
-    fullName = "Dr. Silva",
-    professionalDocument = Some("CRM/SP 123456"),
-    createdAt = now
-  )
+  private val testUser = TestSupport.sampleDoctor(now)
 
   private val sampleClient = Client(
     id = 500L,

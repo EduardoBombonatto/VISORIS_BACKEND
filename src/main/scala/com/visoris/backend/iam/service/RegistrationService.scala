@@ -128,17 +128,18 @@ object RegistrationService:
         persistResult <- (for
           _ <- userRepo.create(user)
           _ <- refreshTokenRepo.create(user.id, refreshTokenPlain, refreshExpires, deviceInfo, ipAddress)
-        yield ()).transact(transactor).attempt.map {
+        yield ()).transact(transactor).attempt.flatMap {
           case Right(_) =>
-            Right(RegistrationResult(accessToken, user, refreshTokenPlain))
+            Async[F].pure(Right(RegistrationResult(accessToken, user, refreshTokenPlain)))
           case Left(e: SQLException) if e.getSQLState == "23505" =>
             val msg = Option(e.getMessage).getOrElse("").toLowerCase
             if msg.contains("professional_document") then
-              Left(RegistrationError.DuplicateField("professionalDocument", "Documento profissional já cadastrado."))
+              Async[F].pure(Left(RegistrationError.DuplicateField("professionalDocument", "Documento profissional já cadastrado.")))
             else
-              Left(RegistrationError.DuplicateField("email", "Este e-mail já está cadastrado."))
-          case Left(_) =>
-            Left(RegistrationError.Internal("Erro interno ao criar conta. Tente novamente."))
+              Async[F].pure(Left(RegistrationError.DuplicateField("email", "Este e-mail já está cadastrado.")))
+          case Left(err) =>
+            Logger[F].error(err)(s"Registration DB error for email=$maskedEmail") *>
+              Async[F].pure(Left(RegistrationError.Internal("Erro interno ao criar conta. Tente novamente.")))
         }
       yield persistResult).flatTap {
         case Left(RegistrationError.Internal(msg)) =>
